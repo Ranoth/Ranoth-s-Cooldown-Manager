@@ -2,6 +2,7 @@
 	<Script file="Printer.lua"/>
 	<Script file="Debug.lua"/>
 	<Script file="Safe.lua"/>
+	<Script file="TextShadow.lua"/>
 	<Script file="Viewers.lua"/>
 	<Script file="Resources.lua"/>
 	<Script file="Options.lua"/>

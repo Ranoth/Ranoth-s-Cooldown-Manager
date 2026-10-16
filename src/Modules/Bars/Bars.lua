@@ -12,6 +12,7 @@ local Bars = RanothsCooldownManager:NewModule("Bars", "AceEvent-3.0")
 
 local Safe = RanothsCooldownManager:GetModule("Safe")
 local Options = RanothsCooldownManager:GetModule("Options")
+local TextShadow = RanothsCooldownManager:GetModule("TextShadow")
 local LSM = LibStub("LibSharedMedia-3.0")
 
 Bars.KEYS = { "CastBar", "Mana", "ClassPower" }
@@ -33,6 +34,8 @@ local function common()
         font = "Friz Quadrata TT",
         fontSize = 12,
         textShadow = false,
+        shadowOffset = 2,
+        fontOutline = "OUTLINE",
     }
 end
 
@@ -245,13 +248,9 @@ local function newText(parent, justify)
 end
 
 local function styleText(text, s)
-    text:SetFont(LSM:Fetch("font", s.font), s.fontSize, "OUTLINE")
-    if s.textShadow then
-        text:SetShadowColor(0, 0, 0, 1)
-        text:SetShadowOffset(1, -1)
-    else
-        text:SetShadowOffset(0, 0)
-    end
+    local outline = s.fontOutline or "OUTLINE"
+    text:SetFont(LSM:Fetch("font", s.font), s.fontSize, outline == "NONE" and "" or outline)
+    TextShadow:Set(text, s.textShadow, s.shadowOffset)
 end
 
 local function styleBar(bar, s)
@@ -379,6 +378,9 @@ function Bars:RefreshCast()
         frame:SetScript("OnUpdate", nil)
     else
         frame.bar:SetMinMaxValues(0, cast.finish - cast.start)
+        -- Set the starting value now, otherwise the first frame shows the previous cast's (full) value.
+        local elapsed = math.max(0, math.min(GetTime() - cast.start, cast.finish - cast.start))
+        frame.bar:SetValue(cast.channel and (cast.finish - cast.start - elapsed) or elapsed)
         frame:SetScript("OnUpdate", onCastUpdate)
     end
     styleCast()
@@ -515,6 +517,7 @@ function Bars:RefreshClassPower()
     if info and info.form and GetShapeshiftFormID() ~= info.form then info = nil end
     if not info then
         frame:SetScript("OnUpdate", nil)
+        frame.pollElapsed = nil
         setShown("ClassPower", false)
         return
     end
@@ -542,9 +545,27 @@ function Bars:RefreshClassPower()
         local divisor = info.fractional and UnitPowerDisplayMod(info.type) or 1
         if not divisor or divisor == 0 then divisor = 1 end
         local current = UnitPower("player", info.type, info.fractional)
+        local partial = false
         for i = 1, max do
             local ok2, value = pcall(function() return math.max(0, math.min(1, current / divisor - (i - 1))) end)
-            frame.segments[i]:SetValue(ok2 and value or 0)
+            value = ok2 and value or 0
+            if value > 0 and value < 1 then partial = true end
+            frame.segments[i]:SetValue(value)
+        end
+        -- UNIT_POWER_* can skip the last fragment change, so poll while a shard is partially filled.
+        if info.fractional and partial then
+            if not frame.pollElapsed then
+                frame.pollElapsed = 0
+                frame:SetScript("OnUpdate", function(f, elapsed)
+                    f.pollElapsed = f.pollElapsed + elapsed
+                    if f.pollElapsed < 0.1 then return end
+                    f.pollElapsed = 0
+                    Bars:RefreshClassPower()
+                end)
+            end
+        elseif frame.pollElapsed then
+            frame.pollElapsed = nil
+            frame:SetScript("OnUpdate", nil)
         end
     end
     setShown("ClassPower", true)
@@ -690,7 +711,7 @@ local CAST_EVENTS = {
     "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
     "UNIT_SPELLCAST_EMPOWER_START", "UNIT_SPELLCAST_EMPOWER_UPDATE", "UNIT_SPELLCAST_EMPOWER_STOP",
 }
-local POWER_EVENTS = { "UNIT_POWER_UPDATE", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER" }
+local POWER_EVENTS = { "UNIT_POWER_UPDATE", "UNIT_POWER_FREQUENT", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER" }
 
 local function onEvent(_, event, _, castID)
     if event:find("^UNIT_SPELLCAST") then
@@ -803,6 +824,18 @@ function Bars:GetOptions()
             group.args.textShadow = {
                 type = "toggle", order = 7.5, name = "Text shadow", hidden = hiddenUnlessCustom,
                 get = function() return s().textShadow end, set = set("textShadow"),
+            }
+            group.args.shadowOffset = {
+                type = "range", order = 7.6, name = "Shadow offset", min = 1, max = 4, step = 1,
+                hidden = hiddenUnlessCustom, disabled = function() return not s().textShadow end,
+                get = function() return s().shadowOffset end, set = set("shadowOffset"),
+            }
+            group.args.fontOutline = {
+                type = "select", order = 7.7, name = "Text outline", hidden = hiddenUnlessCustom,
+                desc = "An outline hides most of a shadow. Pick \"None\" for a pure drop shadow.",
+                values = { NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick outline" },
+                sorting = { "NONE", "OUTLINE", "THICKOUTLINE" },
+                get = function() return s().fontOutline end, set = set("fontOutline"),
             }
             group.args.showText = {
                 type = "toggle", order = 8, name = key == "CastBar" and "Show spell name" or "Show value",

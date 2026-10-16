@@ -10,6 +10,7 @@ local Skin = RanothsCooldownManager:NewModule("Skin", "AceEvent-3.0")
 
 local Viewers = RanothsCooldownManager:GetModule("Viewers")
 local Options = RanothsCooldownManager:GetModule("Options")
+local TextShadow = RanothsCooldownManager:GetModule("TextShadow")
 local LSM = LibStub("LibSharedMedia-3.0")
 
 Skin.KEYS = { "Essential", "Utility", "BuffIcon" }
@@ -28,6 +29,8 @@ local function viewerDefaults()
         countSize = 0, -- 0 = Blizzard's size
         countFont = "", -- LibSharedMedia font name, "" = Blizzard's font
         textShadow = false,
+        shadowOffset = 2,
+        textOutline = "", -- "" = Blizzard's, "NONE", "OUTLINE", "THICKOUTLINE"
         activeOpaque = false, -- icons whose aura is running ignore the viewer's opacity and show at 100%
         itemCount = true, -- show remaining uses on healthstones
     }
@@ -45,7 +48,8 @@ local defaults = {
 local state = setmetatable({}, { __mode = "k" })
 
 local function isNeutral(s)
-    return not s.square and s.zoom == 0 and s.borderSize == 0 and s.countSize == 0 and s.countFont == "" and not s.textShadow
+    return not s.square and s.zoom == 0 and s.borderSize == 0 and s.countSize == 0 and s.countFont == ""
+        and s.textOutline == "" and not s.textShadow
 end
 
 local function findRegions(item)
@@ -113,22 +117,25 @@ local function countdownFontString(item)
     end
 end
 
-local function applyShadow(text, st, enabled, slot)
+local function outlineFlags(s, original)
+    if s.textOutline == "NONE" then return "" end
+    if s.textOutline and s.textOutline ~= "" then return s.textOutline end
+    return original
+end
+
+local function applyShadow(text, s, poll)
+    TextShadow:Set(text, s.textShadow, s.shadowOffset, poll)
+end
+
+--- Outline of the cooldown countdown; its font and size are left to Blizzard.
+local function applyCountdownOutline(text, st, s)
     if not text then return end
-    st.shadow = st.shadow or {}
-    if enabled then
-        if not st.shadow[slot] then
-            local r, g, b, a = text:GetShadowColor()
-            local x, y = text:GetShadowOffset()
-            st.shadow[slot] = { r, g, b, a, x, y }
-        end
-        text:SetShadowColor(0, 0, 0, 1)
-        text:SetShadowOffset(1, -1)
-    elseif st.shadow[slot] then
-        local o = st.shadow[slot]
-        text:SetShadowColor(o[1], o[2], o[3], o[4])
-        text:SetShadowOffset(o[5], o[6])
-        st.shadow[slot] = nil
+    if s.textOutline ~= "" then
+        st.cdFont = st.cdFont or { text:GetFont() }
+        text:SetFont(st.cdFont[1], st.cdFont[2], outlineFlags(s, st.cdFont[3]))
+    elseif st.cdFont then
+        text:SetFont(unpack(st.cdFont))
+        st.cdFont = nil
     end
 end
 
@@ -171,17 +178,19 @@ local function applyItem(item, s)
     local text = countFontString(item)
     if text then
         local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
-        if s.countSize > 0 or path then
+        if s.countSize > 0 or path or s.textOutline ~= "" then
             st.font = st.font or { text:GetFont() }
-            text:SetFont(path or st.font[1], s.countSize > 0 and s.countSize or st.font[2], st.font[3])
+            text:SetFont(path or st.font[1], s.countSize > 0 and s.countSize or st.font[2], outlineFlags(s, st.font[3]))
         elseif st.font then
             text:SetFont(unpack(st.font))
             st.font = nil
         end
     end
 
-    applyShadow(text, st, s.textShadow, "count")
-    applyShadow(countdownFontString(item), st, s.textShadow, "cooldown")
+    local countdown = countdownFontString(item)
+    applyCountdownOutline(countdown, st, s)
+    applyShadow(text, s)
+    applyShadow(countdown, s, true)
 end
 
 local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
@@ -313,10 +322,9 @@ local function applyItemCount(item, s)
     end
     font, size, flags = font or "Fonts\\ARIALN.TTF", size or 16, flags or "OUTLINE"
     local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
-    text:SetFont(path or font, s.countSize > 0 and s.countSize or size, flags)
+    text:SetFont(path or font, s.countSize > 0 and s.countSize or size, outlineFlags(s, flags))
     text:SetText(count)
-    text:SetShadowColor(0, 0, 0, s.textShadow and 1 or 0)
-    text:SetShadowOffset(s.textShadow and 1 or 0, s.textShadow and -1 or 0)
+    applyShadow(text, s)
     text.holder:Show()
 end
 
@@ -450,6 +458,25 @@ function Skin:GetOptions()
                     desc = "Add a shadow to the cooldown countdown and the stack count.",
                     get = function() return s().textShadow end,
                     set = set("textShadow"),
+                },
+                shadowOffset = {
+                    type = "range",
+                    order = 6.1,
+                    name = "Shadow offset",
+                    min = 1, max = 4, step = 1,
+                    disabled = function() return not s().textShadow end,
+                    get = function() return s().shadowOffset end,
+                    set = set("shadowOffset"),
+                },
+                textOutline = {
+                    type = "select",
+                    order = 6.2,
+                    name = "Text outline",
+                    desc = "Blizzard's text has a black outline, which hides most of a shadow. Pick \"None\" for a pure drop shadow.",
+                    values = { [""] = "Blizzard default", NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick outline" },
+                    sorting = { "", "NONE", "OUTLINE", "THICKOUTLINE" },
+                    get = function() return s().textOutline end,
+                    set = set("textOutline"),
                 },
                 activeOpaque = {
                     type = "toggle",
