@@ -48,7 +48,8 @@ local function getFrame(key)
     if isViewerKey(key) then
         return Viewers:Get(key)
     end
-    return Resources:Get(key)
+    local Bars = RanothsCooldownManager:GetModule("Bars", true)
+    return (Bars and Bars:GetFrame(key)) or Resources:Get(key)
 end
 
 --- Stack keys sorted by position, ties broken alphabetically.
@@ -531,6 +532,7 @@ function Layout:OnEnable()
     self:RegisterMessage(Resources.MESSAGES.SHOWN, "OnChange")
     self:RegisterMessage(Resources.MESSAGES.HIDDEN, "OnChange")
     self:RegisterMessage(Resources.MESSAGES.CHANGED, "OnChange")
+    self:RegisterMessage("RCM_BARS_CHANGED", "OnChange")
     self:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
     self:Request()
 end

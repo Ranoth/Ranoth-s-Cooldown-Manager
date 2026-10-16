@@ -13,7 +13,7 @@ local Resources = RanothsCooldownManager:GetModule("Resources")
 local Options = RanothsCooldownManager:GetModule("Options")
 local LSM = LibStub("LibSharedMedia-3.0")
 
-ResourceSkin.KEYS = { "CastBar", "Mana", "ClassPower" }
+ResourceSkin.KEYS = { "CastBar", "Mana" }
 
 local DEFAULT_TEXTURE = "Default"
 local WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -158,7 +158,8 @@ end
 function ResourceSkin:Apply(key)
     local s = self.db.profile[key]
     local frame = Resources:Get(key)
-    if not s or not frame then return end
+    local Bars = RanothsCooldownManager:GetModule("Bars", true)
+    if not s or not frame or (Bars and Bars:IsCustom(key)) then return end
 
     local st = state[frame]
     if not st then
