@@ -1,0 +1,43 @@
+# name: Package and Release
+
+# on:
+#   release:
+#     types:
+#       - released
+
+# jobs:
+#   post_pr:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           token: ${{ secrets.PAT }}
+#           ref: refs/heads/master
+#           fetch-depth: 0
+
+#       - name: Bump version in toc
+#         run: |
+#           VERSION="v$(cat version.txt)"
+#           mapfile -d '' toc_files < <(find . -maxdepth 1 -name "*.toc" -print0)
+#           for toc_file in ${toc_files[@]}; do
+#             sed -i "s/## Version: .*/## Version: $VERSION/" "$toc_file"
+#           done
+
+#       - name: Get latest release
+#         id: get_release
+#         env:
+#           GH_TOKEN: ${{ secrets.PAT }}
+#         run: |
+#           LATEST_RELEASE_ID=$(gh api repos/:owner/:repo/releases/latest --jq .id)
+
+#           RELEASE_JSON=$(curl --header "Authorization: token ${{ secrets.PAT }}" "https://api.github.com/repos/${{ github.repository }}/releases/$LATEST_RELEASE_ID")
+#           RELEASE_BODY=$(echo "$RELEASE_JSON" | jq -r .body)
+
+#           echo "$RELEASE_BODY" > RELEASE.md
+
+#       - name: Build addon
+#         uses: BigWigsMods/packager@master
+#         env:
+#           GITHUB_OAUTH: ${{ secrets.PAT }}
+#           CF_API_KEY: ${{ secrets.CF_API_KEY }}

@@ -1,0 +1,45 @@
+# name: LDoc
+# on:
+#   workflow_run:
+#     workflows: ["Package and Release"]
+#     types:
+#       completed
+#   workflow_dispatch:
+
+# jobs:
+#   ldoc:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+
+#       - name: Setup Lua
+#         uses: leafo/gh-actions-lua@v8
+#         with:
+#           luaVersion: "5.1"
+
+#       - name: Install LuaRocks
+#         run: |
+#           sudo apt update
+#           sudo apt install -y luarocks
+
+#       - name: Setup LDoc
+#         run: |
+#           sudo luarocks install ldoc
+
+#       - name: Generate docs with LDoc
+#         run: |
+#           ldoc -d ./docs .
+
+#       - name: Commit Documentation
+#         run: |
+#           git config --global user.name 'github-actions[bot]'
+#           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+#           if [ -z "$(ls -A ./docs)" ]; then
+#             echo "No documentation to commit."
+#           else
+#             git add ./docs
+#             git commit -m "chore: Update documentation"
+#             git push
+#           fi

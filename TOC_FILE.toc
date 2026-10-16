@@ -1,0 +1,15 @@
+## Interface: INTERFACE_VERSION
+## Title: |cffc66ff0FULL_NAME|r
+## Notes: Describe FULL_NAME!
+## Author: AUTHOR
+## Version: v0.0.0
+## DefaultState: Enabled
+## SavedVariables: CODE_NAMEDB
+## X-Curse-Project-ID: 000000
+
+embeds.xml
+
+src\init.lua
+src\printer.lua
+src\debug.lua
+src\commands.lua
