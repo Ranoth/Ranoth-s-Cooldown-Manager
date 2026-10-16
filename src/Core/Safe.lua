@@ -9,6 +9,12 @@ local Safe = RanothsCooldownManager:NewModule("Safe", "AceEvent-3.0")
 local safeQueue = {}
 local pendingNotify = {}
 
+-- Raw C methods. Blizzard's Edit Mode wraps SetPoint/ClearAllPoints on its system frames in Lua,
+-- and calling those wrappers from addon code runs them tainted. Use these on any Blizzard frame we anchor.
+local frameMethods = getmetatable(UIParent).__index
+Safe.SetPoint = frameMethods.SetPoint
+Safe.ClearAllPoints = frameMethods.ClearAllPoints
+
 --- Run a function now, or as soon as combat ends if in lockdown.
 --- Use for anything that touches protected frames (size, anchors, show/hide).
 --- @param func function

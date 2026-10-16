@@ -13,4 +13,4 @@ src\Init.lua
 
 src\Core\Init.xml
 
-# src\Modules\Init.xml
+src\Modules\Init.xml
