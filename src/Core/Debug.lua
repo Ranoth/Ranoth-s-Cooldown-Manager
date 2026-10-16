@@ -1,11 +1,11 @@
---- Debug module for CODE_NAME.
+--- Debug module for RanothsCooldownManager.
 --- @module "Debug"
 
 local addon_name, _ = ...
-local CODE_NAME = LibStub("AceAddon-3.0"):GetAddon(addon_name)
-local Debug = CODE_NAME:NewModule("Debug")
+local RanothsCooldownManager = LibStub("AceAddon-3.0"):GetAddon(addon_name)
+local Debug = RanothsCooldownManager:NewModule("Debug")
 
-local Printer = CODE_NAME:GetModule("Printer")
+local Printer = RanothsCooldownManager:GetModule("Printer")
 
 --- Higher order function to neutralize each public function of the module when debug mode is disabled.
 --- @param func any
@@ -37,7 +37,7 @@ Debug.ExampleFunction = createToggledFunction(function(self, arg1, arg2)
 end)
 
 function Debug:OnInitialize()
-    self.db = CODE_NAME.db.profile.debug
+    self.db = RanothsCooldownManager.db.profile.debug
     if self.db then
         self:Enable()
     else
@@ -46,9 +46,9 @@ function Debug:OnInitialize()
 end
 
 function Debug:OnEnable()
-    CODE_NAME.db.profile.debug = Debug:IsEnabled()
+    RanothsCooldownManager.db.profile.debug = Debug:IsEnabled()
 end
 
 function Debug:OnDisable()
-    CODE_NAME.db.profile.debug = Debug:IsEnabled()
+    RanothsCooldownManager.db.profile.debug = Debug:IsEnabled()
 end

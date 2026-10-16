@@ -1,0 +1,16 @@
+## Interface: 120105
+## Title: |cffc66ff0Ranoth's Cooldown Manager|r
+## Notes: Describe Ranoth's Cooldown Manager!
+## Author: Ranoth_
+## Version: v0.0.0
+## DefaultState: Enabled
+## SavedVariables: RanothsCooldownManagerDB
+## X-Curse-Project-ID: 000000
+
+Embeds.xml
+
+src\Init.lua
+
+src\Core\Init.xml
+
+# src\Modules\Init.xml

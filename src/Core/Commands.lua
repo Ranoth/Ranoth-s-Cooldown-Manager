@@ -1,27 +1,47 @@
 --- Registers additional slash commands for the addon and some utility without strings attached.
 --- @module "Commands"
-
 local addon_name, _ = ...
-local CODE_NAME = LibStub("AceAddon-3.0"):GetAddon(addon_name)
-local Commands = CODE_NAME:NewModule("Commands")
+local RanothsCooldownManager = LibStub("AceAddon-3.0"):GetAddon(addon_name)
+local Commands = RanothsCooldownManager:NewModule("Commands")
 
-local Printer = CODE_NAME:GetModule("Printer")
-local Debug = CODE_NAME:GetModule("Debug")
+local Printer = RanothsCooldownManager:GetModule("Printer")
+local Debug = RanothsCooldownManager:GetModule("Debug")
 
-local addonShortHand = string.lower(addon_name)
+local addonShortHand = "rcm"
 
+--- Colors pink the addon shorthand for display in the help text
 local function colorizeShortHand(shortHand)
     return "|cffffff00" .. shortHand .. "|r"
 end
 
+--- Colors green the argument help text for display in the help message
 local function colorizeArgHelp(argsHelp)
     return "|cff00ff00" .. argsHelp .. "|r"
 end
 
+--- Displays the core configuration options for the addon
+local function DisplayCoreConfig()
+    Printer:Print("Core options for the addon")
+end
+
 --- @type table<string, table>
 local commandList = {
+    [""] = {
+        func = function()
+            DisplayCoreConfig()
+        end,
+        help = "Prints this message"
+    },
+    ["config"] = {
+        func = function()
+            DisplayCoreConfig()
+        end,
+        help = "Displays core configuration options"
+    },
     ["help"] = {
-        func = function() Commands:PrintHelp() end,
+        func = function()
+            Commands:PrintHelp()
+        end,
         help = "Prints this message"
     },
     ["debug"] = {
@@ -29,7 +49,9 @@ local commandList = {
         help = "Toggles debug mode"
     },
     ["examplewithargs"] = {
-        func = function(args) Printer:Print("Example command with args: " .. args) end,
+        func = function(args)
+            Printer:Print("Example command with args: " .. args)
+        end,
         help = "Example command with arguments",
         argsHelp = "<exampleArgUsage>"
     }
@@ -45,7 +67,7 @@ function Commands:PrintHelp()
 end
 
 --- Registers additional slash commands for the addon
-CODE_NAME:RegisterChatCommand(addonShortHand, function(input)
+RanothsCooldownManager:RegisterChatCommand(addonShortHand, function(input)
     local command, args = input:match("^(%S*)%s*(.-)$") -- match the first word as command then the rest of the input as a string of arguments
 
     local commandInfo = commandList[command]
