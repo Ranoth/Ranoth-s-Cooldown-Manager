@@ -851,6 +851,20 @@ function Bars:GetOptions()
                 get = function() return s().dividerSize end, set = set("dividerSize"),
             }
         end
+        if key ~= "CastBar" then
+            -- The height lives in Layout, which sizes every stacked entry; this is the same setting.
+            group.args.height = {
+                type = "range", order = 3.5, name = "Height", min = 4, max = 60, step = 1,
+                get = function()
+                    return RanothsCooldownManager:GetModule("Layout").db.profile.stack[key].height
+                end,
+                set = function(_, value)
+                    local layout = RanothsCooldownManager:GetModule("Layout")
+                    layout.db.profile.stack[key].height = value
+                    layout:Request()
+                end,
+            }
+        end
         args[key] = group
     end
 
