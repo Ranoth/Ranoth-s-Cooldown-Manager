@@ -10,6 +10,7 @@ local Skin = RanothsCooldownManager:NewModule("Skin", "AceEvent-3.0")
 
 local Viewers = RanothsCooldownManager:GetModule("Viewers")
 local Options = RanothsCooldownManager:GetModule("Options")
+local LSM = LibStub("LibSharedMedia-3.0")
 
 Skin.KEYS = { "Essential", "Utility", "BuffIcon" }
 
@@ -25,6 +26,10 @@ local function viewerDefaults()
         borderSize = 0, -- 0 = no border
         borderColor = { r = 0, g = 0, b = 0, a = 1 },
         countSize = 0, -- 0 = Blizzard's size
+        countFont = "", -- LibSharedMedia font name, "" = Blizzard's font
+        textShadow = false,
+        activeOpaque = false, -- icons whose aura is running ignore the viewer's opacity and show at 100%
+        itemCount = true, -- show remaining uses on healthstones
     }
 end
 
@@ -40,7 +45,7 @@ local defaults = {
 local state = setmetatable({}, { __mode = "k" })
 
 local function isNeutral(s)
-    return not s.square and s.zoom == 0 and s.borderSize == 0 and s.countSize == 0
+    return not s.square and s.zoom == 0 and s.borderSize == 0 and s.countSize == 0 and s.countFont == "" and not s.textShadow
 end
 
 local function findRegions(item)
@@ -100,6 +105,33 @@ local function applyBorder(item, st, icon, s)
     st.border:Show()
 end
 
+local function countdownFontString(item)
+    local cooldown = item.Cooldown
+    if not cooldown or not cooldown.GetRegions then return nil end
+    for _, region in ipairs({ cooldown:GetRegions() }) do
+        if region:GetObjectType() == "FontString" then return region end
+    end
+end
+
+local function applyShadow(text, st, enabled, slot)
+    if not text then return end
+    st.shadow = st.shadow or {}
+    if enabled then
+        if not st.shadow[slot] then
+            local r, g, b, a = text:GetShadowColor()
+            local x, y = text:GetShadowOffset()
+            st.shadow[slot] = { r, g, b, a, x, y }
+        end
+        text:SetShadowColor(0, 0, 0, 1)
+        text:SetShadowOffset(1, -1)
+    elseif st.shadow[slot] then
+        local o = st.shadow[slot]
+        text:SetShadowColor(o[1], o[2], o[3], o[4])
+        text:SetShadowOffset(o[5], o[6])
+        st.shadow[slot] = nil
+    end
+end
+
 local function applyItem(item, s)
     local st = state[item]
     if not st and isNeutral(s) then return end
@@ -138,14 +170,154 @@ local function applyItem(item, s)
 
     local text = countFontString(item)
     if text then
-        if s.countSize > 0 then
+        local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
+        if s.countSize > 0 or path then
             st.font = st.font or { text:GetFont() }
-            text:SetFont(st.font[1], s.countSize, st.font[3])
+            text:SetFont(path or st.font[1], s.countSize > 0 and s.countSize or st.font[2], st.font[3])
         elseif st.font then
             text:SetFont(unpack(st.font))
             st.font = nil
         end
     end
+
+    applyShadow(text, st, s.textShadow, "count")
+    applyShadow(countdownFontString(item), st, s.textShadow, "cooldown")
+end
+
+local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
+
+-- Child alpha multiplies with the viewer's, so to lift active icons above the viewer's opacity the viewer itself is
+-- kept at 1 and the opacity Blizzard asked for is applied to the icons instead.
+local baseAlpha = {} -- key -> opacity Blizzard set on the viewer
+local alphaApplied = {} -- key -> true while we own the viewer's alpha
+local itemAlpha = setmetatable({}, { __mode = "k" })
+local alphaHooked = {}
+
+local function hookViewerAlpha(key, viewer)
+    if alphaHooked[viewer] then return end
+    alphaHooked[viewer] = true
+    hooksecurefunc(viewer, "SetAlpha", function(_, alpha)
+        baseAlpha[key] = alpha
+        if alphaApplied[key] then rawSetAlpha(viewer, 1) end
+    end)
+end
+
+local function isItemActive(key, item)
+    return key == "BuffIcon" or item.wasSetFromAura == true
+end
+
+local function updateActiveAlpha(key)
+    local viewer = Viewers:Get(key)
+    local s = Skin.db.profile[key]
+    if not viewer or not s then return end
+    hookViewerAlpha(key, viewer)
+
+    if not s.activeOpaque then
+        if alphaApplied[key] then
+            alphaApplied[key] = nil
+            rawSetAlpha(viewer, baseAlpha[key] or 1)
+            for _, item in ipairs(Viewers:GetItems(key)) do
+                if itemAlpha[item] then rawSetAlpha(item, 1) end
+                itemAlpha[item] = nil
+            end
+        end
+        return
+    end
+
+    if not alphaApplied[key] then
+        baseAlpha[key] = baseAlpha[key] or viewer:GetAlpha()
+        alphaApplied[key] = true
+    end
+    if viewer:GetAlpha() ~= 1 then rawSetAlpha(viewer, 1) end
+    local base = baseAlpha[key] or 1
+    for _, item in ipairs(Viewers:GetItems(key)) do
+        local a = isItemActive(key, item) and 1 or base
+        if itemAlpha[item] ~= a then
+            itemAlpha[item] = a
+            rawSetAlpha(item, a)
+        end
+    end
+end
+
+local ticker = CreateFrame("Frame")
+local elapsedSince = 0
+local function onTick(_, elapsed)
+    elapsedSince = elapsedSince + elapsed
+    if elapsedSince < 0.1 then return end
+    elapsedSince = 0
+    for _, key in ipairs(Skin.KEYS) do
+        if Skin.db.profile[key].activeOpaque then updateActiveAlpha(key) end
+    end
+end
+
+local function syncTicker()
+    local any = false
+    for _, key in ipairs(Skin.KEYS) do
+        if Skin.db.profile[key].activeOpaque then any = true end
+        updateActiveAlpha(key)
+    end
+    ticker:SetScript("OnUpdate", any and onTick or nil)
+end
+
+--- Item cooldowns Blizzard shows without any stack count: spell category -> item whose remaining uses we display.
+local CATEGORY_ITEMS = {
+    [1711] = 5512, -- Healthstone
+    [2566] = 224464, -- Demonic Healthstone
+}
+
+local itemCounts = setmetatable({}, { __mode = "k" }) -- item -> our own FontString
+
+local function itemCountText(item)
+    local text = itemCounts[item]
+    if text then return text end
+    local holder = CreateFrame("Frame", nil, item)
+    holder:SetAllPoints(item)
+    holder:SetFrameLevel(item:GetFrameLevel() + 6)
+    holder:EnableMouse(false)
+    text = holder:CreateFontString(nil, "OVERLAY")
+    text:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", -2, 2)
+    local source = countFontString(item)
+    local font, size, flags = "Fonts\\ARIALN.TTF", 16, "OUTLINE"
+    if source then
+        local f, sz, fl = source:GetFont()
+        font, size, flags = f or font, sz or size, fl or flags
+    end
+    text:SetFont(font, size, flags)
+    text.holder = holder
+    itemCounts[item] = text
+    return text
+end
+
+local function applyItemCount(item, s)
+    local info = item.cooldownInfo
+    local itemID = type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
+    local text = itemCounts[item]
+    if not (s.itemCount and itemID) then
+        if text then text.holder:Hide() end
+        return
+    end
+    -- The second and third arguments include charges, so this is the number of uses left rather than the stack size.
+    local ok, count = pcall(C_Item.GetItemCount, itemID, false, true)
+    if not ok or type(count) ~= "number" or count <= 0 then
+        if text then text.holder:Hide() end
+        return
+    end
+    text = itemCountText(item)
+    local st = state[item]
+    local font, size, flags
+    if st and st.font then
+        font, size, flags = unpack(st.font)
+    else
+        local source = countFontString(item)
+        if source then font, size, flags = source:GetFont() end
+    end
+    font, size, flags = font or "Fonts\\ARIALN.TTF", size or 16, flags or "OUTLINE"
+    local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
+    text:SetFont(path or font, s.countSize > 0 and s.countSize or size, flags)
+    text:SetText(count)
+    text:SetShadowColor(0, 0, 0, s.textShadow and 1 or 0)
+    text:SetShadowOffset(s.textShadow and 1 or 0, s.textShadow and -1 or 0)
+    text.holder:Show()
 end
 
 --- Apply the saved look to every icon of one viewer.
@@ -155,6 +327,17 @@ function Skin:Apply(key)
     if not s then return end
     for _, item in ipairs(Viewers:GetItems(key)) do
         applyItem(item, s)
+        applyItemCount(item, s)
+    end
+    syncTicker()
+end
+
+function Skin:UpdateCounts()
+    for _, key in ipairs(self.KEYS) do
+        local s = self.db.profile[key]
+        for _, item in ipairs(Viewers:GetItems(key)) do
+            applyItemCount(item, s)
+        end
     end
 end
 
@@ -247,6 +430,44 @@ function Skin:GetOptions()
                     get = function() return s().countSize end,
                     set = set("countSize"),
                 },
+                countFont = {
+                    type = "select",
+                    order = 5.5,
+                    name = "Stack text font",
+                    desc = "Font of the stack count and the Healthstone charges.",
+                    values = function()
+                        local values = { [""] = "Blizzard default" }
+                        for _, name in ipairs(LSM:List("font")) do values[name] = name end
+                        return values
+                    end,
+                    get = function() return s().countFont end,
+                    set = set("countFont"),
+                },
+                textShadow = {
+                    type = "toggle",
+                    order = 6,
+                    name = "Text shadow",
+                    desc = "Add a shadow to the cooldown countdown and the stack count.",
+                    get = function() return s().textShadow end,
+                    set = set("textShadow"),
+                },
+                activeOpaque = {
+                    type = "toggle",
+                    order = 7,
+                    name = "Full opacity when active",
+                    desc = "Icons whose buff or aura is running are shown at 100% opacity, while the others keep the viewer's opacity set in Edit Mode.",
+                    width = "double",
+                    get = function() return s().activeOpaque end,
+                    set = set("activeOpaque"),
+                },
+                itemCount = {
+                    type = "toggle",
+                    order = 8,
+                    name = "Healthstone charges",
+                    desc = "Show how many uses a Healthstone or Demonic Healthstone has left as a stack count.",
+                    get = function() return s().itemCount end,
+                    set = set("itemCount"),
+                },
             },
         }
     end
@@ -267,5 +488,7 @@ function Skin:OnEnable()
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "OnViewerMessage")
     self:RegisterMessage(Viewers.MESSAGES.LAYOUT_UPDATED, "OnViewerMessage")
     self:RegisterMessage(Viewers.MESSAGES.SHOWN, "OnViewerMessage")
+    self:RegisterEvent("BAG_UPDATE_DELAYED", "UpdateCounts")
+    self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "UpdateCounts")
     self:ApplyAll()
 end

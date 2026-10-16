@@ -95,6 +95,12 @@ local function hookViewer(key, viewer)
             queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
         end)
     end
+    -- Edit Mode changes such as icon size only re-run Layout(), without RefreshLayout, but still resize the viewer.
+    if viewer.Layout then
+        Viewers:SecureHook(viewer, "Layout", function()
+            queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
+        end)
+    end
     Viewers:SecureHookScript(viewer, "OnShow", function()
         queueNotify(Viewers.MESSAGES.SHOWN, key, viewer)
     end)

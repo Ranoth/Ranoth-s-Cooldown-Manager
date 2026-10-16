@@ -32,6 +32,7 @@ local function common()
         borderColor = { r = 0, g = 0, b = 0, a = 1 },
         font = "Friz Quadrata TT",
         fontSize = 12,
+        textShadow = false,
     }
 end
 
@@ -245,6 +246,12 @@ end
 
 local function styleText(text, s)
     text:SetFont(LSM:Fetch("font", s.font), s.fontSize, "OUTLINE")
+    if s.textShadow then
+        text:SetShadowColor(0, 0, 0, 1)
+        text:SetShadowOffset(1, -1)
+    else
+        text:SetShadowOffset(0, 0)
+    end
 end
 
 local function styleBar(bar, s)
@@ -792,6 +799,10 @@ function Bars:GetOptions()
             group.args.fontSize = {
                 type = "range", order = 7, name = "Font size", min = 6, max = 32, step = 1, hidden = hiddenUnlessCustom,
                 get = function() return s().fontSize end, set = set("fontSize"),
+            }
+            group.args.textShadow = {
+                type = "toggle", order = 7.5, name = "Text shadow", hidden = hiddenUnlessCustom,
+                get = function() return s().textShadow end, set = set("textShadow"),
             }
             group.args.showText = {
                 type = "toggle", order = 8, name = key == "CastBar" and "Show spell name" or "Show value",

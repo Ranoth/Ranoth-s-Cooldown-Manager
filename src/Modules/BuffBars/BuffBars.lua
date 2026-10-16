@@ -97,6 +97,10 @@ local function hookViewer()
     if viewer and viewer.RefreshLayout and not BuffBars:IsHooked(viewer, "RefreshLayout") then
         BuffBars:SecureHook(viewer, "RefreshLayout", "OnViewerRefreshed")
     end
+    -- Edit Mode size changes only re-run Layout(), without RefreshLayout.
+    if viewer and viewer.Layout and not BuffBars:IsHooked(viewer, "Layout") then
+        BuffBars:SecureHook(viewer, "Layout", "OnViewerRefreshed")
+    end
     hookItems()
 end
 

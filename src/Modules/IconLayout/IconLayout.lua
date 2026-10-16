@@ -214,14 +214,17 @@ local viewerHooks = {}
 local function hookViewer(key)
     local viewer = Viewers:Get(key)
     if not viewer then return end
-    if viewer.RefreshLayout and not viewerHooks[viewer] then
+    if not viewerHooks[viewer] then
         viewerHooks[viewer] = true
-        IconLayout:SecureHook(viewer, "RefreshLayout", function()
+        local function relayout()
             -- Blizzard just re-anchored every icon, so any saved anchors are stale
             for _, item in ipairs(Viewers:GetItems(key)) do savedPoints[item] = nil end
             hookItems(key)
             IconLayout:Apply(key)
-        end)
+        end
+        -- Layout() also runs on its own when Edit Mode changes the icon size, without RefreshLayout.
+        if viewer.RefreshLayout then IconLayout:SecureHook(viewer, "RefreshLayout", relayout) end
+        if viewer.Layout then IconLayout:SecureHook(viewer, "Layout", relayout) end
     end
     hookItems(key)
 end
