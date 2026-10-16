@@ -48,6 +48,12 @@ local commandList = {
         func = Debug.Toggle,
         help = "Toggles debug mode"
     },
+    ["resources"] = {
+        func = function()
+            RanothsCooldownManager:GetModule("Resources"):Describe()
+        end,
+        help = "Shows which Blizzard resource frames were found"
+    },
     ["examplewithargs"] = {
         func = function(args)
             Printer:Print("Example command with args: " .. args)

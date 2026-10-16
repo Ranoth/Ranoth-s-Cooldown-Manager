@@ -3,5 +3,6 @@
 	<Script file="Debug.lua"/>
 	<Script file="Safe.lua"/>
 	<Script file="Viewers.lua"/>
+	<Script file="Resources.lua"/>
 	<Script file="Commands.lua"/>
 </Ui>
