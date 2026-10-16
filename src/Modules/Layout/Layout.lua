@@ -154,12 +154,12 @@ function Layout:ToggleDebug()
 end
 
 local function slotHeight(profile, key, frame)
-    if not frame then return 0 end
     if isViewerKey(key) then
-        return frame:IsShown() and frame:GetHeight() or 0
+        return (frame and frame:IsShown()) and frame:GetHeight() or 0
     end
+    -- Blizzard may not have a frame for the bar at all (e.g. no resource for this spec), which counts as hidden
     local entry = profile.stack[key]
-    if entry.collapse and not frame:IsShown() then return 0 end
+    if entry.collapse and not (frame and frame:IsShown()) then return 0 end
     return entry.height
 end
 
@@ -208,6 +208,7 @@ end
 local function placeSlot(self, key, prev, above, width)
     local profile = self.db.profile
     local frame = getFrame(key)
+    local left = false -- true when the frame is left to Edit Mode
 
     -- Anchoring a frame to the stack would be circular if the anchor viewer already depends on it
     -- (e.g. Edit Mode anchors Essential to it). Leave such frames to Edit Mode.
@@ -219,10 +220,11 @@ local function placeSlot(self, key, prev, above, width)
             Printer:Print(key .. " is anchored to by the anchor viewer in Edit Mode, so it is left where Edit Mode puts it.")
         end
         frame = nil
+        left = true
     end
 
     local slot = self:GetSlot(key)
-    local height = slotHeight(profile, key, frame)
+    local height = left and 0 or slotHeight(profile, key, frame)
     local gap = height > 0 and profile.spacing or 0
 
     slot:ClearAllPoints()
@@ -233,6 +235,10 @@ local function placeSlot(self, key, prev, above, width)
         slot:SetPoint("TOP", prev, "BOTTOM", 0, -gap)
     end
     slot:Show()
+    if self.debug then
+        local state = not frame and "no frame" or (frame:IsShown() and "shown" or "hidden")
+        slot.label:SetText(key .. " | " .. state .. " | h=" .. height .. (profile.stack[key].collapse and " | collapse" or ""))
+    end
 
     if frame then attach(profile, key, frame, slot) end
 
@@ -242,11 +248,45 @@ local function placeSlot(self, key, prev, above, width)
     return prev, 0
 end
 
+local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
+local suppressed = {} -- frame -> true while its entry is disabled
+local alphaHooked = {}
+local settingAlpha = false
+
+--- Hide or show a Blizzard frame by alpha. Blizzard keeps showing/hiding and fading these frames itself,
+--- so the alpha is re-enforced whenever Blizzard changes it. Raw methods avoid running Blizzard code tainted.
+local function setSuppressed(frame, hide)
+    if hide then
+        suppressed[frame] = true
+        if not alphaHooked[frame] then
+            alphaHooked[frame] = true
+            hooksecurefunc(frame, "SetAlpha", function(f)
+                if suppressed[f] and not settingAlpha then
+                    settingAlpha = true
+                    rawSetAlpha(f, 0)
+                    settingAlpha = false
+                end
+            end)
+        end
+        rawSetAlpha(frame, 0)
+    elseif suppressed[frame] then
+        suppressed[frame] = nil
+        rawSetAlpha(frame, 1)
+    end
+end
+
 --- Recompute and apply the whole stack. Call Request() instead unless you are already out of combat.
 function Layout:Apply()
     local profile = self.db.profile
     local anchorFrame = Viewers:Get(profile.anchorKey)
     if not anchorFrame then return end
+
+    for key in pairs(defaults.profile.stack) do
+        local frame = getFrame(key)
+        if frame then
+            setSuppressed(frame, not (profile.stack[key].enabled or key == profile.anchorKey))
+        end
+    end
 
     local keys = self:GetOrderedKeys(false)
     local anchorIndex
@@ -429,7 +469,7 @@ function Layout:GetOptions()
                     up = {
                         type = "execute",
                         order = 2,
-                        name = "Move up",
+                        name = "Up",
                         width = "half",
                         disabled = i == 1,
                         func = function() self:SetPosition(key, i - 1) end,
@@ -437,7 +477,7 @@ function Layout:GetOptions()
                     down = {
                         type = "execute",
                         order = 3,
-                        name = "Move down",
+                        name = "Down",
                         width = "half",
                         disabled = i == #ordered,
                         func = function() self:SetPosition(key, i + 1) end,

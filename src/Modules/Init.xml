@@ -2,4 +2,6 @@
 	<Script file="Layout\Layout.lua"/>
 	<Script file="BuffBars\BuffBars.lua"/>
 	<Script file="IconLayout\IconLayout.lua"/>
+	<Script file="Skin\Skin.lua"/>
+	<Script file="ResourceSkin\ResourceSkin.lua"/>
 </Ui>
