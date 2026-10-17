@@ -68,6 +68,9 @@ local defaults = {
             color = { r = 1, g = 0.8, b = 0.2, a = 1 },
             inactive = { r = 0.15, g = 0.15, b = 0.15, a = 0.8 },
             dividerSize = 1,
+            primaryPower = false, -- show the main resource here and mana on the primary power bar
+            showText = false,
+            textFormat = "value",
         }),
     },
 }
@@ -189,6 +192,32 @@ local function powerColor(token, powerType)
     local info = PowerBarColor and (PowerBarColor[token] or PowerBarColor[powerType])
     if info then return info.r, info.g, info.b end
     return 0, 0.5, 1
+end
+
+local MANA = Enum.PowerType.Mana
+
+--- Segmented class power for the current class, spec and form, or nil.
+local function classPowerInfo()
+    local _, classToken = UnitClass("player")
+    local info = CLASS_POWER[classToken]
+    if info and info.spec and GetSpecialization() ~= info.spec then return nil end
+    if info and info.form and GetShapeshiftFormID() ~= info.form then return nil end
+    return info
+end
+
+local function hasMana()
+    local ok, positive = pcall(function() return UnitPowerMax("player", MANA) > 0 end)
+    -- A secret maximum can only come from a pool that exists.
+    return not ok or positive
+end
+
+--- The main resource (Maelstrom, Insanity, Astral Power...) when it is moved to the class power bar so the
+--- primary power bar can show mana instead; nil otherwise. Segmented class power keeps the bar.
+local function movedPrimary()
+    if not (Bars.db.profile.ClassPower.primaryPower and Bars.db.profile.Mana.mode == "custom") then return nil end
+    local powerType, token = UnitPowerType("player")
+    if not powerType or powerType == MANA or classPowerInfo() or not hasMana() then return nil end
+    return powerType, token
 end
 
 -- Frame building ---------------------------------------------------------------------------------------------
@@ -445,11 +474,17 @@ local function setPowerText(text, format, powerType, value, max)
     if not ok then pcall(text.SetFormattedText, text, "%s", AbbreviateLargeNumbers and AbbreviateLargeNumbers(value) or value) end
 end
 
+local function setClassText(frame, s, powerType, value, max)
+    frame.text:SetShown(s.showText)
+    if s.showText then setPowerText(frame.text, s.textFormat, powerType, value, max) end
+end
+
 function Bars:RefreshPower()
     local frame, s = frames.Mana, profile("Mana")
     if not frame or s.mode ~= "custom" then return end
 
     local powerType, token = UnitPowerType("player")
+    if movedPrimary() then powerType, token = MANA, "MANA" end
     local max = UnitPowerMax("player", powerType)
     if not powerType or not hasValue(max) then
         setShown("Mana", false)
@@ -529,14 +564,22 @@ end
 
 updateRunes = function(frame)
     local anyCharging = false
+    local ready = 0
     for i = 1, 6 do
-        local start, duration, ready = GetRuneCooldown(i)
+        local start, duration, isReady = GetRuneCooldown(i)
         local value = 1
-        if not ready and start and duration and duration > 0 then
+        if not isReady and start and duration and duration > 0 then
             value = math.min(1, (GetTime() - start) / duration)
             anyCharging = true
+        else
+            ready = ready + 1
         end
         frame.segments[i]:SetValue(value)
+    end
+    -- The rune poll runs at 20Hz; the text only changes when a rune finishes or starts recharging.
+    if frame.lastText ~= ready then
+        frame.lastText = ready
+        setClassText(frame, profile("ClassPower"), nil, ready, 6)
     end
     frame:SetScript("OnUpdate", anyCharging and onRuneUpdate or nil)
 end
@@ -545,19 +588,50 @@ local function segmentValue(current, divisor, index)
     return math.max(0, math.min(1, current / divisor - (index - 1)))
 end
 
+--- Show the moved main resource as one continuous bar. Secret values go straight to the StatusBar.
+local function refreshMovedPrimary(frame, s, powerType, token)
+    local max = UnitPowerMax("player", powerType)
+    if not hasValue(max) then
+        setShown("ClassPower", false)
+        return
+    end
+    if frame.count ~= 1 then layoutSegments(frame, 1) end
+    local seg = frame.segments[1]
+    if frame.styledPower ~= powerType then
+        local r, g, b = s.color.r, s.color.g, s.color.b
+        if s.usePowerColor then r, g, b = powerColor(token, powerType) end
+        seg:SetStatusBarColor(r, g, b, 1)
+        seg.bg:SetVertexColor(s.inactive.r, s.inactive.g, s.inactive.b, s.inactive.a)
+        frame.styledPower = powerType
+    end
+    seg:SetMinMaxValues(0, max)
+    local value = UnitPower("player", powerType)
+    seg:SetValue(value)
+    setClassText(frame, s, powerType, value, max)
+    frame.lastText = nil
+    frame.continuous = true
+    setShown("ClassPower", true)
+end
+
 function Bars:RefreshClassPower()
     local frame, s = frames.ClassPower, profile("ClassPower")
     if not frame then return end
 
-    local _, classToken = UnitClass("player")
-    local info = CLASS_POWER[classToken]
-    if info and info.spec and GetSpecialization() ~= info.spec then info = nil end
-    if info and info.form and GetShapeshiftFormID() ~= info.form then info = nil end
+    local info = classPowerInfo()
     if not info then
         frame:SetScript("OnUpdate", nil)
         frame.pollElapsed = nil
-        setShown("ClassPower", false)
+        local powerType, token = movedPrimary()
+        if powerType then
+            refreshMovedPrimary(frame, s, powerType, token)
+        else
+            setShown("ClassPower", false)
+        end
         return
+    end
+    if frame.continuous then
+        frame.segments[1]:SetMinMaxValues(0, 1)
+        frame.continuous = nil
     end
 
     local max = info.runes and 6 or UnitPowerMax("player", info.type)
@@ -590,6 +664,11 @@ function Bars:RefreshClassPower()
             value = ok2 and value or 0
             if value > 0 and value < 1 then partial = true end
             frame.segments[i]:SetValue(value)
+        end
+        local whole = info.fractional and UnitPower("player", info.type) or current
+        if issecretvalue(whole) or frame.lastText ~= whole then
+            frame.lastText = not issecretvalue(whole) and whole or nil
+            setClassText(frame, s, info.type, whole, max)
         end
         -- UNIT_POWER_* can skip the last fragment change, so poll while a shard is partially filled.
         if info.fractional and partial then
@@ -641,6 +720,8 @@ function Bars:StyleAll()
     for _, seg in ipairs(frames.ClassPower.segments) do
         styleBar(seg, ps)
     end
+    styleText(frames.ClassPower.text, ps)
+    frames.ClassPower.lastText = nil
     frames.ClassPower.count = nil
     frames.ClassPower.styledPower = nil
 end
@@ -742,6 +823,13 @@ local function buildFrames()
         divider:Hide()
         classPower.dividers[i] = divider
     end
+    -- Above the dividers so they never cross the text.
+    classPower.textFrame = CreateFrame("Frame", nil, classPower)
+    classPower.textFrame:SetAllPoints(classPower)
+    classPower.textFrame:SetFrameLevel(classPower:GetFrameLevel() + 6)
+    classPower.textFrame:EnableMouse(false)
+    classPower.text = newText(classPower.textFrame, "CENTER")
+    classPower.text:SetPoint("CENTER")
     classPower:SetScript("OnSizeChanged", function(f) f.count = nil; Bars:RefreshClassPower() end)
     frames.ClassPower = classPower
 end
@@ -773,9 +861,14 @@ local function onEvent(_, event, _, castID)
     elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
         -- For power events the second payload argument is the changed power token, not a cast ID.
         local _, primaryToken = UnitPowerType("player")
+        local moved = movedPrimary()
+        if moved then
+            if castID == "MANA" then Bars:RefreshPower() end
+            if castID == primaryToken then Bars:RefreshClassPower() end
+            return
+        end
         if castID == primaryToken then Bars:RefreshPower() end
-        local _, classToken = UnitClass("player")
-        local info = CLASS_POWER[classToken]
+        local info = classPowerInfo()
         if info and castID == info.token then Bars:RefreshClassPower() end
     elseif event:find("^UNIT_") then
         Bars:RefreshPower()
@@ -862,37 +955,37 @@ function Bars:GetOptions()
                 get = function() return s().mode end,
                 set = function(_, value) self:SetMode(key, value) end,
             }
-            group.args.font = {
-                type = "select", order = 6, name = "Font",
-                values = function() return mediaValues("font") end, hidden = hiddenUnlessCustom,
-                get = function() return s().font end, set = set("font"),
-            }
-            group.args.fontSize = {
-                type = "range", order = 7, name = "Font size", min = 6, max = 32, step = 1, hidden = hiddenUnlessCustom,
-                get = function() return s().fontSize end, set = set("fontSize"),
-            }
-            group.args.textShadow = {
-                type = "toggle", order = 7.5, name = "Text shadow", hidden = hiddenUnlessCustom,
-                get = function() return s().textShadow end, set = set("textShadow"),
-            }
-            group.args.shadowOffset = {
-                type = "range", order = 7.6, name = "Shadow offset", min = 1, max = 4, step = 1,
-                hidden = hiddenUnlessCustom, disabled = function() return not s().textShadow end,
-                get = function() return s().shadowOffset end, set = set("shadowOffset"),
-            }
-            group.args.fontOutline = {
-                type = "select", order = 7.7, name = "Text outline", hidden = hiddenUnlessCustom,
-                desc = "An outline hides most of a shadow. Pick \"None\" for a pure drop shadow.",
-                values = { NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick outline" },
-                sorting = { "NONE", "OUTLINE", "THICKOUTLINE" },
-                get = function() return s().fontOutline end, set = set("fontOutline"),
-            }
-            group.args.showText = {
-                type = "toggle", order = 8, name = key == "CastBar" and "Show spell name" or "Show value",
-                hidden = hiddenUnlessCustom,
-                get = function() return s().showText end, set = set("showText"),
-            }
         end
+        group.args.font = {
+            type = "select", order = 6, name = "Font",
+            values = function() return mediaValues("font") end, hidden = hiddenUnlessCustom,
+            get = function() return s().font end, set = set("font"),
+        }
+        group.args.fontSize = {
+            type = "range", order = 7, name = "Font size", min = 6, max = 32, step = 1, hidden = hiddenUnlessCustom,
+            get = function() return s().fontSize end, set = set("fontSize"),
+        }
+        group.args.textShadow = {
+            type = "toggle", order = 7.5, name = "Text shadow", hidden = hiddenUnlessCustom,
+            get = function() return s().textShadow end, set = set("textShadow"),
+        }
+        group.args.shadowOffset = {
+            type = "range", order = 7.6, name = "Shadow offset", min = 1, max = 4, step = 1,
+            hidden = hiddenUnlessCustom, disabled = function() return not s().textShadow end,
+            get = function() return s().shadowOffset end, set = set("shadowOffset"),
+        }
+        group.args.fontOutline = {
+            type = "select", order = 7.7, name = "Text outline", hidden = hiddenUnlessCustom,
+            desc = "An outline hides most of a shadow. Pick \"None\" for a pure drop shadow.",
+            values = { NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick outline" },
+            sorting = { "NONE", "OUTLINE", "THICKOUTLINE" },
+            get = function() return s().fontOutline end, set = set("fontOutline"),
+        }
+        group.args.showText = {
+            type = "toggle", order = 8, name = key == "CastBar" and "Show spell name" or "Show value",
+            hidden = hiddenUnlessCustom,
+            get = function() return s().showText end, set = set("showText"),
+        }
 
         if key == "CastBar" then
             group.args.showTime = {
@@ -937,6 +1030,14 @@ function Bars:GetOptions()
         end
 
         if key == "ClassPower" then
+            group.args.primaryPower = {
+                type = "toggle", order = 1, name = "Show main resource", width = "double",
+                desc = "For specs with a main resource and mana but no class power (Elemental Shaman, Shadow Priest, "
+                    .. "Balance Druid...), show the main resource here and mana on the primary power bar. "
+                    .. "Requires the custom primary power bar.",
+                disabled = function() return profile("Mana").mode ~= "custom" end,
+                get = function() return s().primaryPower end, set = set("primaryPower"),
+            }
             group.args.inactive = color(22, "Empty segment color", "inactive", nil)
             group.args.dividerSize = {
                 type = "range", order = 23, name = "Divider thickness",
