@@ -3,6 +3,7 @@
 	<Script file="BuffBars\BuffBars.lua"/>
 	<Script file="IconLayout\IconLayout.lua"/>
 	<Script file="Skin\Skin.lua"/>
+	<Script file="Glow\Glow.lua"/>
 	<Script file="Bars\Bars.lua"/>
 	<Script file="ResourceSkin\ResourceSkin.lua"/>
 </Ui>

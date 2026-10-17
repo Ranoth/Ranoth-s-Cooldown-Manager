@@ -12,6 +12,8 @@ local shadows = setmetatable({}, { __mode = "k" }) -- text -> shadow FontString
 local polled = setmetatable({}, { __mode = "k" }) -- texts updated from C code, which no Lua hook can see
 local countdowns = setmetatable({}, { __mode = "k" })
 local countdownHooked = setmetatable({}, { __mode = "k" })
+local countdownOwners = setmetatable({}, { __mode = "k" })
+local ownerHooked = setmetatable({}, { __mode = "k" })
 local poller = CreateFrame("Frame")
 local onPoll
 local function refreshPoller()
@@ -41,7 +43,16 @@ local function syncShown(text)
     local shadow = shadows[text]
     if not shadow or not shadow.enabled then return end
     -- This API accepts secret booleans; SetShown does not.
-    shadow:SetAlphaFromBoolean(text:IsShown(), 1, 0)
+    local owner = countdownOwners[text]
+    if owner then
+        -- The cooldown engine can retain text while suppressing its rendering for the GCD.
+        local gcd = owner.isOnGCD
+        if type(gcd) ~= "boolean" then gcd = false end
+        shadow:SetAlphaFromBoolean(gcd, 0, text:GetAlpha())
+        shadow:SetAlphaFromBoolean(text:IsShown(), shadow:GetAlpha(), 0)
+    else
+        shadow:SetAlphaFromBoolean(text:IsShown(), text:GetAlpha(), 0)
+    end
 end
 
 local function syncText(text)
@@ -73,6 +84,7 @@ local HOOKED = {
     SetFont = syncFont, SetFontObject = syncFont,
     SetJustifyH = syncFont, SetJustifyV = syncFont,
     Show = syncShown, Hide = syncShown, SetShown = syncShown,
+    SetAlpha = syncShown, SetAlphaFromBoolean = syncShown,
 }
 
 local function create(text)
@@ -109,7 +121,8 @@ end
 --- @param enabled boolean
 --- @param offset number|nil Shadow distance in pixels, down and to the right (default 2)
 --- @param poll Cooldown|nil Countdown owner; its lifecycle wakes polling, blank countdowns stop it.
-function TextShadow:Set(text, enabled, offset, poll)
+--- @param owner Frame|nil Viewer item whose GCD state suppresses countdown rendering.
+function TextShadow:Set(text, enabled, offset, poll, owner)
     if not text then return end
     local shadow = shadows[text]
     if not enabled then
@@ -123,6 +136,15 @@ function TextShadow:Set(text, enabled, offset, poll)
     end
 
     shadow = shadow or create(text)
+    countdownOwners[text] = owner
+    if owner and not ownerHooked[owner] and owner.CacheCooldownValues then
+        ownerHooked[owner] = true
+        hooksecurefunc(owner, "CacheCooldownValues", function(item)
+            local cooldown = item.Cooldown
+            local countdown = cooldown and countdowns[cooldown]
+            if countdown then syncShown(countdown) end
+        end)
+    end
     shadow.enabled = true
     shadow:Show()
     offset = offset or 2

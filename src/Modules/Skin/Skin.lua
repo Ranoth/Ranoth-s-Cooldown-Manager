@@ -46,6 +46,32 @@ local defaults = {
 
 --- item -> { border, mask, overlay, masked, font }
 local state = setmetatable({}, { __mode = "k" })
+local applied = setmetatable({}, { __mode = "k" })
+local revisions = {}
+local nativeEffects = setmetatable({}, { __mode = "k" })
+
+--- Fit native ready/proc artwork to the area inside our border without replacing its animation.
+function Skin:FitNativeEffect(item, effect, key)
+    if not effect then return end
+    local icon = item.Icon or item
+    local inset = self.db.profile[key].borderSize
+    local level = item:GetFrameLevel() + 7
+    local previous = nativeEffects[effect]
+    if previous and previous.icon == icon and previous.inset == inset and previous.level == level then return end
+    effect:ClearAllPoints()
+    effect:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, -inset)
+    effect:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, inset)
+    effect:SetFrameLevel(level)
+    effect:SetClipsChildren(true)
+    for _, name in ipairs({ "Flipbook", "ProcStartFlipbook", "ProcLoopFlipbook", "ProcAltGlow" }) do
+        local texture = effect[name]
+        if texture then
+            texture:ClearAllPoints()
+            texture:SetAllPoints(effect)
+        end
+    end
+    nativeEffects[effect] = { icon = icon, inset = inset, level = level }
+end
 
 local function isNeutral(s)
     return not s.square and s.zoom == 0 and s.borderSize == 0 and s.countSize == 0 and s.countFont == ""
@@ -123,8 +149,8 @@ local function outlineFlags(s, original)
     return original
 end
 
-local function applyShadow(text, s, poll)
-    TextShadow:Set(text, s.textShadow, s.shadowOffset, poll)
+local function applyShadow(text, s, poll, owner)
+    TextShadow:Set(text, s.textShadow, s.shadowOffset, poll, owner)
 end
 
 --- Outline of the cooldown countdown; its font and size are left to Blizzard.
@@ -139,7 +165,7 @@ local function applyCountdownOutline(text, st, s)
     end
 end
 
-local function applyItem(item, s)
+local function applyItem(item, s, countdown)
     local st = state[item]
     if not st and isNeutral(s) then return end
 
@@ -187,10 +213,9 @@ local function applyItem(item, s)
         end
     end
 
-    local countdown = countdownFontString(item)
     applyCountdownOutline(countdown, st, s)
     applyShadow(text, s)
-    applyShadow(countdown, s, item.Cooldown)
+    applyShadow(countdown, s, item.Cooldown, item)
 end
 
 local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
@@ -344,22 +369,32 @@ local function refreshItemCount(item)
     applyItemCount(item, s)
 end
 
---- Apply the saved look to every icon of one viewer.
+--- Settings changes invalidate the viewer's styling; layout messages only reconcile changed items.
 --- @param key string One of Skin.KEYS
-function Skin:Apply(key)
+--- @param incremental boolean|nil Keep styling already applied to unchanged frames.
+function Skin:Apply(key, incremental)
     local s = self.db.profile[key]
     if not s then return end
+    if not incremental then revisions[key] = (revisions[key] or 0) + 1 end
+    local revision = revisions[key] or 0
     local items = Viewers:GetItems(key)
     alphaItems[key] = items
-    for item, owner in pairs(countItems) do
-        if owner == key then
-            countItems[item] = nil
-            local text = itemCounts[item]
-            if text then text.holder:Hide() end
-        end
-    end
     for _, item in ipairs(items) do
-        applyItem(item, s)
+        self:FitNativeEffect(item, item.CooldownFlash, key)
+        self:FitNativeEffect(item, item.SpellActivationAlert, key)
+        local countdown = countdownFontString(item)
+        local text = countFontString(item)
+        local previous = applied[item]
+        local dirty = not previous or previous.key ~= key or previous.revision ~= revision
+            or previous.cooldownID ~= item.cooldownID or previous.icon ~= item.Icon
+            or previous.cooldown ~= item.Cooldown or previous.text ~= text or previous.countdown ~= countdown
+        if dirty then
+            applyItem(item, s, countdown)
+            applied[item] = {
+                key = key, revision = revision, cooldownID = item.cooldownID, icon = item.Icon,
+                cooldown = item.Cooldown, text = text, countdown = countdown,
+            }
+        end
         countOwners[item] = key
         if not countHooked[item] then
             countHooked[item] = true
@@ -367,10 +402,23 @@ function Skin:Apply(key)
             item:HookScript("OnShow", refreshItemCount)
         end
         local info = item.cooldownInfo
-        if s.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID] then
-            countItems[item] = key
+        local tracked = s.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
+        countItems[item] = tracked and key or nil
+        applyItemCount(item, s, dirty)
+    end
+    for item, owner in pairs(countItems) do
+        if owner == key then
+            local active = false
+            for _, current in ipairs(items) do
+                if current == item then active = true; break end
+            end
+            if not active then
+                countItems[item] = nil
+                countOwners[item] = nil
+                local text = itemCounts[item]
+                if text then text.holder:Hide() end
+            end
         end
-        applyItemCount(item, s, true)
     end
     updateActiveAlpha(key)
 end
@@ -389,7 +437,7 @@ function Skin:ApplyAll()
 end
 
 function Skin:OnViewerMessage(_, key)
-    if self.db.profile[key] then self:Apply(key) end
+    if self.db.profile[key] then self:Apply(key, true) end
 end
 
 local LABELS = {

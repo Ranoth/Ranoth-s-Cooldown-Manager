@@ -28,6 +28,7 @@ local defaults = {
     profile = {
         anchorKey = "Essential",
         spacing = 0,
+        strata = "LOW",
         width = { mode = "anchor", value = 250 }, -- "anchor" follows the anchor viewer's width, "fixed" uses value
         stack = {
             CastBar = { enabled = true, position = 1, height = 20, collapse = false },
@@ -118,6 +119,37 @@ function Layout:Describe()
 end
 
 local container
+local originalStrata = {}
+local rawSetFrameStrata = getmetatable(UIParent).__index.SetFrameStrata
+
+local function restoreStrata(frame)
+    local original = originalStrata[frame]
+    if original then
+        rawSetFrameStrata(frame, original)
+        originalStrata[frame] = nil
+    end
+end
+
+function Layout:ApplyStrata()
+    local profile = self.db.profile
+    local managed = {}
+    for key in pairs(defaults.profile.stack) do
+        if profile.stack[key].enabled or key == profile.anchorKey then
+            local frame = getFrame(key)
+            if frame then
+                managed[frame] = true
+                originalStrata[frame] = originalStrata[frame] or frame:GetFrameStrata()
+                if frame:GetFrameStrata() ~= profile.strata then
+                    rawSetFrameStrata(frame, profile.strata)
+                end
+            end
+        end
+    end
+    for frame in pairs(originalStrata) do
+        if not managed[frame] then restoreStrata(frame) end
+    end
+    self:GetContainer():SetFrameStrata(profile.strata)
+end
 
 --- The frame that spans the whole stack. Safe to use for alpha, scale, or visibility of the widget.
 --- @return Frame
@@ -281,6 +313,7 @@ function Layout:Apply()
     local profile = self.db.profile
     local anchorFrame = Viewers:Get(profile.anchorKey)
     if not anchorFrame then return end
+    self:ApplyStrata()
 
     for key in pairs(defaults.profile.stack) do
         local frame = getFrame(key)
@@ -408,6 +441,19 @@ function Layout:GetOptions()
                 get = function() return profile().spacing end,
                 set = function(_, value)
                     profile().spacing = value
+                    self:Request()
+                end,
+            },
+            strata = {
+                type = "select",
+                order = 3.5,
+                name = "Frame strata",
+                desc = "Drawing layer for the managed viewers and resource bars. LOW keeps them below MEDIUM-layer UI such as Dragon Rider. Changes wait until combat ends.",
+                values = { BACKGROUND = "Background", LOW = "Low", MEDIUM = "Medium", HIGH = "High" },
+                sorting = { "BACKGROUND", "LOW", "MEDIUM", "HIGH" },
+                get = function() return profile().strata end,
+                set = function(_, value)
+                    profile().strata = value
                     self:Request()
                 end,
             },
@@ -543,4 +589,8 @@ function Layout:OnDisable()
     -- Frames we moved keep their anchors until Blizzard repositions them or the UI reloads.
     self.pending = false
     if container then container:Hide() end
+    Safe:RunWhenSafe(function()
+        if self:IsEnabled() then return end
+        for frame in pairs(originalStrata) do restoreStrata(frame) end
+    end)
 end
