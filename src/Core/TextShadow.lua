@@ -10,6 +10,30 @@ local TextShadow = RanothsCooldownManager:NewModule("TextShadow")
 
 local shadows = setmetatable({}, { __mode = "k" }) -- text -> shadow FontString
 local polled = setmetatable({}, { __mode = "k" }) -- texts updated from C code, which no Lua hook can see
+local countdowns = setmetatable({}, { __mode = "k" })
+local countdownHooked = setmetatable({}, { __mode = "k" })
+local poller = CreateFrame("Frame")
+local onPoll
+local function refreshPoller()
+    poller:SetScript("OnUpdate", next(polled) and onPoll or nil)
+end
+
+local function wakeCountdown(cooldown)
+    local text = countdowns[cooldown]
+    local shadow = text and shadows[text]
+    if not shadow or not shadow.enabled then return end
+    polled[text] = true
+    refreshPoller()
+end
+
+local function stopCountdown(cooldown)
+    local text = countdowns[cooldown]
+    if not text then return end
+    polled[text] = nil
+    local shadow = shadows[text]
+    if shadow then shadow:SetText(""); shadow.hasText = false end
+    refreshPoller()
+end
 
 local LAYER_BELOW = { HIGHLIGHT = "OVERLAY", OVERLAY = "ARTWORK", ARTWORK = "BORDER", BORDER = "BACKGROUND" }
 
@@ -62,23 +86,29 @@ local function create(text)
     return shadow
 end
 
-local poller = CreateFrame("Frame")
 local elapsedSince = 0
-local function onPoll(_, elapsed)
+onPoll = function(_, elapsed)
     elapsedSince = elapsedSince + elapsed
     if elapsedSince < 0.05 then return end
     elapsedSince = 0
     for text in pairs(polled) do
-        syncText(text)
-        syncShown(text)
+        local value = text:GetText()
+        if not issecretvalue(value) and (value == nil or value == "") then
+            polled[text] = nil
+            syncText(text)
+        else
+            syncText(text)
+            syncShown(text)
+        end
     end
+    refreshPoller()
 end
 
 --- Turn the drop shadow of a FontString on or off. The text itself is never moved.
 --- @param text FontString
 --- @param enabled boolean
 --- @param offset number|nil Shadow distance in pixels, down and to the right (default 2)
---- @param poll boolean|nil Text changed by C code (cooldown countdown), refreshed at most 20 times per second
+--- @param poll Cooldown|nil Countdown owner; its lifecycle wakes polling, blank countdowns stop it.
 function TextShadow:Set(text, enabled, offset, poll)
     if not text then return end
     local shadow = shadows[text]
@@ -88,7 +118,7 @@ function TextShadow:Set(text, enabled, offset, poll)
             shadow:Hide()
         end
         polled[text] = nil
-        poller:SetScript("OnUpdate", next(polled) and onPoll or nil)
+        refreshPoller()
         return
     end
 
@@ -113,6 +143,22 @@ function TextShadow:Set(text, enabled, offset, poll)
     syncText(text)
     syncShown(text)
 
-    polled[text] = poll and true or nil
-    poller:SetScript("OnUpdate", next(polled) and onPoll or nil)
+    if poll then
+        countdowns[poll] = text
+        if not countdownHooked[poll] then
+            countdownHooked[poll] = true
+            for _, method in ipairs({ "SetCooldown", "SetCooldownDuration", "SetCooldownFromDurationObject",
+                "SetCooldownFromExpirationTime", "SetHideCountdownNumbers" }) do
+                if poll[method] then hooksecurefunc(poll, method, wakeCountdown) end
+            end
+            if poll.Clear then hooksecurefunc(poll, "Clear", stopCountdown) end
+            poll:HookScript("OnShow", wakeCountdown)
+            poll:HookScript("OnHide", stopCountdown)
+            poll:HookScript("OnCooldownDone", stopCountdown)
+        end
+        wakeCountdown(poll)
+    else
+        polled[text] = nil
+        refreshPoller()
+    end
 end

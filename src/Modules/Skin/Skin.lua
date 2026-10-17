@@ -190,7 +190,7 @@ local function applyItem(item, s)
     local countdown = countdownFontString(item)
     applyCountdownOutline(countdown, st, s)
     applyShadow(text, s)
-    applyShadow(countdown, s, true)
+    applyShadow(countdown, s, item.Cooldown)
 end
 
 local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
@@ -272,6 +272,9 @@ local CATEGORY_ITEMS = {
 }
 
 local itemCounts = setmetatable({}, { __mode = "k" }) -- item -> our own FontString
+local countItems = {} -- Healthstone item frame -> viewer key, including stones with no remaining uses
+local countOwners = setmetatable({}, { __mode = "k" })
+local countHooked = setmetatable({}, { __mode = "k" })
 
 local function itemCountText(item)
     local text = itemCounts[item]
@@ -324,8 +327,21 @@ local function applyItemCount(item, s, style)
         text:SetFont(path or font, s.countSize > 0 and s.countSize or size, outlineFlags(s, flags))
         applyShadow(text, s)
     end
-    text:SetText(count)
+    if text.lastCount ~= count then
+        text:SetText(count)
+        text.lastCount = count
+    end
     text.holder:Show()
+end
+
+local function refreshItemCount(item)
+    local key = countOwners[item]
+    if not key then return end
+    local s = Skin.db.profile[key]
+    local info = item.cooldownInfo
+    local tracked = s.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
+    countItems[item] = tracked and key or nil
+    applyItemCount(item, s)
 end
 
 --- Apply the saved look to every icon of one viewer.
@@ -335,19 +351,34 @@ function Skin:Apply(key)
     if not s then return end
     local items = Viewers:GetItems(key)
     alphaItems[key] = items
+    for item, owner in pairs(countItems) do
+        if owner == key then
+            countItems[item] = nil
+            local text = itemCounts[item]
+            if text then text.holder:Hide() end
+        end
+    end
     for _, item in ipairs(items) do
         applyItem(item, s)
+        countOwners[item] = key
+        if not countHooked[item] then
+            countHooked[item] = true
+            if item.SetCooldownID then hooksecurefunc(item, "SetCooldownID", refreshItemCount) end
+            item:HookScript("OnShow", refreshItemCount)
+        end
+        local info = item.cooldownInfo
+        if s.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID] then
+            countItems[item] = key
+        end
         applyItemCount(item, s, true)
     end
     updateActiveAlpha(key)
 end
 
+--- Bag/cooldown events only revisit known Healthstone icons; viewer refreshes rebuild the registry.
 function Skin:UpdateCounts()
-    for _, key in ipairs(self.KEYS) do
-        local s = self.db.profile[key]
-        for _, item in ipairs(Viewers:GetItems(key)) do
-            applyItemCount(item, s)
-        end
+    for item, key in pairs(countItems) do
+        applyItemCount(item, self.db.profile[key])
     end
 end
 

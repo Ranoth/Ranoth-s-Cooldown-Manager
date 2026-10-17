@@ -276,6 +276,15 @@ local function castColor(s)
     return c
 end
 
+local function updateCastTime(frame, remaining)
+    if not frame.timeText:IsShown() then return end
+    local tenth = math.floor(remaining * 10 + 0.5)
+    if frame.timeTenth ~= tenth then
+        frame.timeTenth = tenth
+        frame.timeText:SetFormattedText("%.1f", tenth / 10)
+    end
+end
+
 local function onCastUpdate(frame)
     if not cast then return end
     local now = GetTime()
@@ -286,7 +295,7 @@ local function onCastUpdate(frame)
     end
     local remaining = cast.finish - now
     frame.bar:SetValue(cast.channel and remaining or (now - cast.start))
-    if frame.timeText:IsShown() then frame.timeText:SetFormattedText("%.1f", remaining) end
+    updateCastTime(frame, remaining)
 end
 
 local function styleCast()
@@ -389,6 +398,7 @@ function Bars:RefreshCast()
         -- Set the starting value now, otherwise the first frame shows the previous cast's (full) value.
         local elapsed = math.max(0, math.min(GetTime() - cast.start, cast.finish - cast.start))
         frame.bar:SetValue(cast.channel and (cast.finish - cast.start - elapsed) or elapsed)
+        updateCastTime(frame, cast.finish - cast.start - elapsed)
         frame:SetScript("OnUpdate", onCastUpdate)
     end
     styleCast()
@@ -446,13 +456,24 @@ function Bars:RefreshPower()
         return
     end
 
-    local c = s.color
-    if s.usePowerColor then
-        local r, g, b = powerColor(token, powerType)
-        c = { r = r, g = g, b = b, a = 1 }
+    if frame.styledPower ~= powerType then
+        local c = s.color
+        local r, g, b, a = c.r, c.g, c.b, c.a
+        if s.usePowerColor then
+            r, g, b = powerColor(token, powerType)
+            a = 1
+        end
+        frame.bar:SetStatusBarColor(r, g, b, a)
+        frame.styledPower = powerType
     end
-    frame.bar:SetStatusBarColor(c.r, c.g, c.b, c.a)
-    frame.bar:SetMinMaxValues(0, max)
+    -- Secret maxima cannot be compared or retained as cache keys.
+    if issecretvalue(max) then
+        frame.bar:SetMinMaxValues(0, max)
+        frame.powerMax = nil
+    elseif frame.powerMax ~= max then
+        frame.bar:SetMinMaxValues(0, max)
+        frame.powerMax = max
+    end
     local value = UnitPower("player", powerType)
     frame.bar:SetValue(value)
     frame.text:SetShown(s.showText)
@@ -539,9 +560,6 @@ function Bars:RefreshClassPower()
         return
     end
 
-    local r, g, b = s.color.r, s.color.g, s.color.b
-    if s.usePowerColor then r, g, b = powerColor(info.token, info.type) end
-
     local max = info.runes and 6 or UnitPowerMax("player", info.type)
     local ok = pcall(function() max = math.min(max, MAX_SEGMENTS) end)
     if not ok or not max or max <= 0 then
@@ -550,10 +568,14 @@ function Bars:RefreshClassPower()
     end
 
     if frame.count ~= max then layoutSegments(frame, max) end
-    for i = 1, max do
-        local seg = frame.segments[i]
-        seg:SetStatusBarColor(r, g, b, 1)
-        seg.bg:SetVertexColor(s.inactive.r, s.inactive.g, s.inactive.b, s.inactive.a)
+    if frame.styledPower ~= info then
+        local r, g, b = s.color.r, s.color.g, s.color.b
+        if s.usePowerColor then r, g, b = powerColor(info.token, info.type) end
+        for _, seg in ipairs(frame.segments) do
+            seg:SetStatusBarColor(r, g, b, 1)
+            seg.bg:SetVertexColor(s.inactive.r, s.inactive.g, s.inactive.b, s.inactive.a)
+        end
+        frame.styledPower = info
     end
 
     if info.runes then
@@ -609,6 +631,9 @@ function Bars:StyleAll()
     local ms = profile("Mana")
     styleBar(frames.Mana.bar, ms)
     styleText(frames.Mana.text, ms)
+    -- Reapply power-dependent styling after settings/profile changes, not on every value update.
+    frames.Mana.styledPower = nil
+    frames.Mana.powerMax = nil
 
     styleFrameCommon("ClassPower")
     local ps = profile("ClassPower")
@@ -617,6 +642,7 @@ function Bars:StyleAll()
         styleBar(seg, ps)
     end
     frames.ClassPower.count = nil
+    frames.ClassPower.styledPower = nil
 end
 
 --- Hide Blizzard's version of every bar we draw ourselves, and show it again for bars that went back to Blizzard.
