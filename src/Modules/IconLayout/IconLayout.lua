@@ -27,6 +27,13 @@ local defaults = {
 local hookedItems = {}
 local applying = {}
 local savedPoints = {} -- item -> Blizzard's anchors before we moved it
+local REQUESTED = "RCM_ICON_LAYOUT_REQUESTED"
+
+function IconLayout:Request(key)
+    local settings = self.db.profile[key]
+    if not settings or not (settings.center or settings.compact) then return end
+    Safe:Notify(REQUESTED, key)
+end
 
 local function savePoints(item)
     if savedPoints[item] then return end
@@ -202,7 +209,7 @@ local function hookItems(key)
     for _, item in ipairs(Viewers:GetItems(key)) do
         if not hookedItems[item] then
             hookedItems[item] = true
-            local function apply() IconLayout:Apply(key) end
+            local function apply() IconLayout:Request(key) end
             IconLayout:SecureHookScript(item, "OnShow", apply)
             IconLayout:SecureHookScript(item, "OnHide", apply)
         end
@@ -219,14 +226,18 @@ local function hookViewer(key)
         local function relayout()
             -- Blizzard just re-anchored every icon, so any saved anchors are stale
             for _, item in ipairs(Viewers:GetItems(key)) do savedPoints[item] = nil end
-            hookItems(key)
-            IconLayout:Apply(key)
+            IconLayout:Request(key)
         end
         -- Layout() also runs on its own when Edit Mode changes the icon size, without RefreshLayout.
         if viewer.RefreshLayout then IconLayout:SecureHook(viewer, "RefreshLayout", relayout) end
         if viewer.Layout then IconLayout:SecureHook(viewer, "Layout", relayout) end
     end
     hookItems(key)
+end
+
+function IconLayout:OnLayoutRequested(_, key)
+    hookItems(key)
+    self:Apply(key)
 end
 
 function IconLayout:OnViewerAvailable(_, key)
@@ -339,6 +350,7 @@ function IconLayout:OnInitialize()
 end
 
 function IconLayout:OnEnable()
+    self:RegisterMessage(REQUESTED, "OnLayoutRequested")
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "OnViewerAvailable")
     for _, key in ipairs(self.KEYS) do
         hookViewer(key)

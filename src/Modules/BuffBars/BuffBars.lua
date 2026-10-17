@@ -24,6 +24,11 @@ local defaults = {
 
 local hookedItems = {}
 local applying = false
+local REQUESTED = "RCM_BUFF_BARS_REQUESTED"
+
+function BuffBars:Request()
+    if self.db.profile.compact then Safe:Notify(REQUESTED, KEY) end
+end
 
 --- Active bars in display order. Uses each item's layoutIndex when all items have one,
 --- otherwise keeps the order GetItemFrames returned.
@@ -75,19 +80,23 @@ function BuffBars:Apply()
     applying = false
 end
 
---- Hide/show of a single bar changes who is active, so repack immediately.
+--- Merge pooled-item show/hide bursts into one repack after Blizzard finishes refreshing.
 --- Hooked once per pooled item frame.
 local function hookItems()
     for _, item in ipairs(Viewers:GetItems(KEY)) do
         if not hookedItems[item] then
             hookedItems[item] = true
-            BuffBars:SecureHookScript(item, "OnShow", "Apply")
-            BuffBars:SecureHookScript(item, "OnHide", "Apply")
+            BuffBars:SecureHookScript(item, "OnShow", "Request")
+            BuffBars:SecureHookScript(item, "OnHide", "Request")
         end
     end
 end
 
 function BuffBars:OnViewerRefreshed()
+    self:Request()
+end
+
+function BuffBars:OnLayoutRequested()
     hookItems()
     self:Apply()
 end
@@ -181,6 +190,7 @@ function BuffBars:OnInitialize()
 end
 
 function BuffBars:OnEnable()
+    self:RegisterMessage(REQUESTED, "OnLayoutRequested")
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "OnViewerAvailable")
     hookViewer()
     self:Apply()

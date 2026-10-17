@@ -201,13 +201,17 @@ local baseAlpha = {} -- key -> opacity Blizzard set on the viewer
 local alphaApplied = {} -- key -> true while we own the viewer's alpha
 local itemAlpha = setmetatable({}, { __mode = "k" })
 local alphaHooked = {}
+local alphaItems = {}
+local alphaItemKeys = setmetatable({}, { __mode = "k" })
+local alphaItemHooked = setmetatable({}, { __mode = "k" })
+local updateActiveAlpha
 
 local function hookViewerAlpha(key, viewer)
     if alphaHooked[viewer] then return end
     alphaHooked[viewer] = true
     hooksecurefunc(viewer, "SetAlpha", function(_, alpha)
         baseAlpha[key] = alpha
-        if alphaApplied[key] then rawSetAlpha(viewer, 1) end
+        if alphaApplied[key] then updateActiveAlpha(key) end
     end)
 end
 
@@ -215,17 +219,29 @@ local function isItemActive(key, item)
     return key == "BuffIcon" or item.wasSetFromAura == true
 end
 
-local function updateActiveAlpha(key)
+local function updateItemAlpha(item)
+    local key = alphaItemKeys[item]
+    if not key or not alphaApplied[key] then return end
+    local a = isItemActive(key, item) and 1 or (baseAlpha[key] or 1)
+    if itemAlpha[item] ~= a then
+        itemAlpha[item] = a
+        rawSetAlpha(item, a)
+    end
+end
+
+updateActiveAlpha = function(key)
     local viewer = Viewers:Get(key)
     local s = Skin.db.profile[key]
     if not viewer or not s then return end
+    local items = alphaItems[key]
+    if not items then return end
     hookViewerAlpha(key, viewer)
 
     if not s.activeOpaque then
         if alphaApplied[key] then
             alphaApplied[key] = nil
             rawSetAlpha(viewer, baseAlpha[key] or 1)
-            for _, item in ipairs(Viewers:GetItems(key)) do
+            for _, item in ipairs(items) do
                 if itemAlpha[item] then rawSetAlpha(item, 1) end
                 itemAlpha[item] = nil
             end
@@ -238,34 +254,15 @@ local function updateActiveAlpha(key)
         alphaApplied[key] = true
     end
     if viewer:GetAlpha() ~= 1 then rawSetAlpha(viewer, 1) end
-    local base = baseAlpha[key] or 1
-    for _, item in ipairs(Viewers:GetItems(key)) do
-        local a = isItemActive(key, item) and 1 or base
-        if itemAlpha[item] ~= a then
-            itemAlpha[item] = a
-            rawSetAlpha(item, a)
+    for _, item in ipairs(items) do
+        alphaItemKeys[item] = key
+        -- This finishes after Blizzard has chosen between aura and cooldown display.
+        if key ~= "BuffIcon" and not alphaItemHooked[item] and item.CacheCooldownValues then
+            hooksecurefunc(item, "CacheCooldownValues", updateItemAlpha)
+            alphaItemHooked[item] = true
         end
+        updateItemAlpha(item)
     end
-end
-
-local ticker = CreateFrame("Frame")
-local elapsedSince = 0
-local function onTick(_, elapsed)
-    elapsedSince = elapsedSince + elapsed
-    if elapsedSince < 0.1 then return end
-    elapsedSince = 0
-    for _, key in ipairs(Skin.KEYS) do
-        if Skin.db.profile[key].activeOpaque then updateActiveAlpha(key) end
-    end
-end
-
-local function syncTicker()
-    local any = false
-    for _, key in ipairs(Skin.KEYS) do
-        if Skin.db.profile[key].activeOpaque then any = true end
-        updateActiveAlpha(key)
-    end
-    ticker:SetScript("OnUpdate", any and onTick or nil)
 end
 
 --- Item cooldowns Blizzard shows without any stack count: spell category -> item whose remaining uses we display.
@@ -297,7 +294,7 @@ local function itemCountText(item)
     return text
 end
 
-local function applyItemCount(item, s)
+local function applyItemCount(item, s, style)
     local info = item.cooldownInfo
     local itemID = type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
     local text = itemCounts[item]
@@ -311,20 +308,23 @@ local function applyItemCount(item, s)
         if text then text.holder:Hide() end
         return
     end
+    local created = not text
     text = itemCountText(item)
-    local st = state[item]
-    local font, size, flags
-    if st and st.font then
-        font, size, flags = unpack(st.font)
-    else
-        local source = countFontString(item)
-        if source then font, size, flags = source:GetFont() end
+    if style or created then
+        local st = state[item]
+        local font, size, flags
+        if st and st.font then
+            font, size, flags = unpack(st.font)
+        else
+            local source = countFontString(item)
+            if source then font, size, flags = source:GetFont() end
+        end
+        font, size, flags = font or "Fonts\\ARIALN.TTF", size or 16, flags or "OUTLINE"
+        local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
+        text:SetFont(path or font, s.countSize > 0 and s.countSize or size, outlineFlags(s, flags))
+        applyShadow(text, s)
     end
-    font, size, flags = font or "Fonts\\ARIALN.TTF", size or 16, flags or "OUTLINE"
-    local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
-    text:SetFont(path or font, s.countSize > 0 and s.countSize or size, outlineFlags(s, flags))
     text:SetText(count)
-    applyShadow(text, s)
     text.holder:Show()
 end
 
@@ -333,11 +333,13 @@ end
 function Skin:Apply(key)
     local s = self.db.profile[key]
     if not s then return end
-    for _, item in ipairs(Viewers:GetItems(key)) do
+    local items = Viewers:GetItems(key)
+    alphaItems[key] = items
+    for _, item in ipairs(items) do
         applyItem(item, s)
-        applyItemCount(item, s)
+        applyItemCount(item, s, true)
     end
-    syncTicker()
+    updateActiveAlpha(key)
 end
 
 function Skin:UpdateCounts()

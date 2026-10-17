@@ -338,13 +338,15 @@ function Layout:Apply()
     self:SendMessage(self.MESSAGES.APPLIED, frame)
 end
 
---- Request a relayout. Coalesced, and deferred until combat ends if needed.
+--- Request one relayout next frame, or after combat if protected frames cannot be moved yet.
 function Layout:Request()
     if self.pending then return end
     self.pending = true
-    Safe:RunWhenSafe(function()
-        self.pending = false
-        if self:IsEnabled() then self:Apply() end
+    C_Timer.After(0, function()
+        Safe:RunWhenSafe(function()
+            self.pending = false
+            if self:IsEnabled() then self:Apply() end
+        end)
     end)
 end
 

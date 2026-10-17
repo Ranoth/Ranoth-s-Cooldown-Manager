@@ -13,54 +13,72 @@ local polled = setmetatable({}, { __mode = "k" }) -- texts updated from C code, 
 
 local LAYER_BELOW = { HIGHLIGHT = "OVERLAY", OVERLAY = "ARTWORK", ARTWORK = "BORDER", BORDER = "BACKGROUND" }
 
--- In combat the text and its shown state can be secret values. SetText accepts secrets, SetShown does not,
--- so visibility goes through SetAlphaFromBoolean, which does.
-local function syncShown(shadow, text)
-    local shown = text:IsShown()
-    if pcall(shadow.SetShown, shadow, shown) then
-        shadow:SetAlpha(1)
-        return
-    end
-    shadow:Show()
-    if shadow.SetAlphaFromBoolean then
-        pcall(shadow.SetAlphaFromBoolean, shadow, shown, 1, 0)
-    end
+local function syncShown(text)
+    local shadow = shadows[text]
+    if not shadow or not shadow.enabled then return end
+    -- This API accepts secret booleans; SetShown does not.
+    shadow:SetAlphaFromBoolean(text:IsShown(), 1, 0)
 end
 
-local function sync(text)
+local function syncText(text)
+    local shadow = shadows[text]
+    if not shadow or not shadow.enabled then return end
+    local value = text:GetText()
+    if issecretvalue(value) then
+        shadow.lastText = nil
+        shadow.hasText = false
+    else
+        if shadow.hasText and shadow.lastText == value then return end
+        shadow.lastText = value
+        shadow.hasText = true
+    end
+    shadow:SetText(value)
+end
+
+local function syncFont(text)
     local shadow = shadows[text]
     if not shadow or not shadow.enabled then return end
     local font, size, flags = text:GetFont()
-    if font then pcall(shadow.SetFont, shadow, font, size, flags) end
-    pcall(shadow.SetJustifyH, shadow, text:GetJustifyH())
-    pcall(shadow.SetJustifyV, shadow, text:GetJustifyV())
-    pcall(shadow.SetText, shadow, text:GetText())
-    syncShown(shadow, text)
+    if font then shadow:SetFont(font, size, flags) end
+    shadow:SetJustifyH(text:GetJustifyH())
+    shadow:SetJustifyV(text:GetJustifyV())
 end
 
-local HOOKED = { "SetText", "SetFormattedText", "SetFont", "SetFontObject", "Show", "Hide", "SetShown" }
+local HOOKED = {
+    SetText = syncText, SetFormattedText = syncText,
+    SetFont = syncFont, SetFontObject = syncFont,
+    SetJustifyH = syncFont, SetJustifyV = syncFont,
+    Show = syncShown, Hide = syncShown, SetShown = syncShown,
+}
 
 local function create(text)
     local shadow = text:GetParent():CreateFontString(nil, "OVERLAY")
     shadow:SetTextColor(0, 0, 0, 1)
     shadow:SetShadowOffset(0, 0)
     shadows[text] = shadow
-    for _, method in ipairs(HOOKED) do
-        if text[method] then hooksecurefunc(text, method, sync) end
+    for method, callback in pairs(HOOKED) do
+        if text[method] then hooksecurefunc(text, method, callback) end
     end
     return shadow
 end
 
 local poller = CreateFrame("Frame")
-local function onPoll()
-    for text in pairs(polled) do sync(text) end
+local elapsedSince = 0
+local function onPoll(_, elapsed)
+    elapsedSince = elapsedSince + elapsed
+    if elapsedSince < 0.05 then return end
+    elapsedSince = 0
+    for text in pairs(polled) do
+        syncText(text)
+        syncShown(text)
+    end
 end
 
 --- Turn the drop shadow of a FontString on or off. The text itself is never moved.
 --- @param text FontString
 --- @param enabled boolean
 --- @param offset number|nil Shadow distance in pixels, down and to the right (default 2)
---- @param poll boolean|nil Text whose content is changed by C code (cooldown countdown), refreshed every frame
+--- @param poll boolean|nil Text changed by C code (cooldown countdown), refreshed at most 20 times per second
 function TextShadow:Set(text, enabled, offset, poll)
     if not text then return end
     local shadow = shadows[text]
@@ -76,6 +94,7 @@ function TextShadow:Set(text, enabled, offset, poll)
 
     shadow = shadow or create(text)
     shadow.enabled = true
+    shadow:Show()
     offset = offset or 2
     local layer = text:GetDrawLayer()
     -- Sublevels are not reliable for FontStrings, so the shadow goes on the top of the layer just below the text.
@@ -90,7 +109,9 @@ function TextShadow:Set(text, enabled, offset, poll)
     shadow:SetPoint("BOTTOMRIGHT", text, "BOTTOMRIGHT", offset, -offset)
     -- Clear any native shadow we may have set before.
     text:SetShadowOffset(0, 0)
-    sync(text)
+    syncFont(text)
+    syncText(text)
+    syncShown(text)
 
     polled[text] = poll and true or nil
     poller:SetScript("OnUpdate", next(polled) and onPoll or nil)

@@ -90,13 +90,17 @@ local cast = nil -- active cast state: { name, start, finish, channel, notInterr
 local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
 local hiddenBlizzard = {} -- Blizzard frame -> true while our custom bar replaces it
 local alphaHooked = {}
+local alphaAnimations = {}
 local settingAlpha = false
+local enforcer = CreateFrame("Frame")
+enforcer:Hide()
 
 local function forceHidden(f)
     if hiddenBlizzard[f] and not settingAlpha then
         settingAlpha = true
         rawSetAlpha(f, 0)
         settingAlpha = false
+        enforcer:Show()
     end
 end
 
@@ -110,35 +114,39 @@ end
 --- Blizzard's fade and interrupt displays are Alpha animations, which override the frame's own alpha without
 --- calling SetAlpha. Stopping them keeps the frame hidden.
 local function stopAlphaAnimations(frame)
-    if not frame.GetAnimationGroups then return end
-    for _, group in ipairs({ frame:GetAnimationGroups() }) do
-        if group:IsPlaying() and hasAlphaAnimation(group) then group:Stop() end
+    local groups = alphaAnimations[frame]
+    if not groups then return end
+    for _, group in ipairs(groups) do
+        if group:IsPlaying() then group:Stop() end
     end
 end
 
 local function hookAnimations(frame)
     if not frame.GetAnimationGroups then return end
+    local groups = {}
+    alphaAnimations[frame] = groups
     for _, group in ipairs({ frame:GetAnimationGroups() }) do
         if hasAlphaAnimation(group) then
+            groups[#groups + 1] = group
             pcall(hooksecurefunc, group, "Play", function()
                 if hiddenBlizzard[frame] then
-                    forceHidden(frame)
                     group:Stop()
+                    forceHidden(frame)
                 end
             end)
         end
     end
 end
 
--- Blizzard also changes alpha through paths a hook cannot see, so the hidden frames are checked every frame.
-local enforcer = CreateFrame("Frame")
-enforcer:Hide()
+-- Animation Stop can restore alpha after Play hooks run. Check once on the next frame,
+-- then sleep until another alpha/show/animation hook requests enforcement.
 enforcer:SetScript("OnUpdate", function()
     for f in pairs(hiddenBlizzard) do
-        local ok, visible = pcall(function() return f:GetAlpha() > 0 end)
-        if not ok or visible then forceHidden(f) end
         stopAlphaAnimations(f)
+        local alpha = f:GetAlpha()
+        if issecretvalue(alpha) or alpha ~= 0 then forceHidden(f) end
     end
+    enforcer:Hide()
 end)
 
 --- Hide a Blizzard frame by alpha. Raw methods avoid running Blizzard code tainted.
@@ -490,7 +498,15 @@ local function layoutSegments(frame, count)
     frame.count = count
 end
 
-local function updateRunes(frame)
+local updateRunes
+local function onRuneUpdate(frame, elapsed)
+    frame.runeElapsed = (frame.runeElapsed or 0) + elapsed
+    if frame.runeElapsed < 0.05 then return end
+    frame.runeElapsed = 0
+    updateRunes(frame)
+end
+
+updateRunes = function(frame)
     local anyCharging = false
     for i = 1, 6 do
         local start, duration, ready = GetRuneCooldown(i)
@@ -501,10 +517,11 @@ local function updateRunes(frame)
         end
         frame.segments[i]:SetValue(value)
     end
-    frame:SetScript("OnUpdate", anyCharging and function(f)
-        f.elapsed = (f.elapsed or 0) + 0.05
-        updateRunes(f)
-    end or nil)
+    frame:SetScript("OnUpdate", anyCharging and onRuneUpdate or nil)
+end
+
+local function segmentValue(current, divisor, index)
+    return math.max(0, math.min(1, current / divisor - (index - 1)))
 end
 
 function Bars:RefreshClassPower()
@@ -547,7 +564,7 @@ function Bars:RefreshClassPower()
         local current = UnitPower("player", info.type, info.fractional)
         local partial = false
         for i = 1, max do
-            local ok2, value = pcall(function() return math.max(0, math.min(1, current / divisor - (i - 1))) end)
+            local ok2, value = pcall(segmentValue, current, divisor, i)
             value = ok2 and value or 0
             if value > 0 and value < 1 then partial = true end
             frame.segments[i]:SetValue(value)
@@ -727,6 +744,13 @@ local function onEvent(_, event, _, castID)
         Bars:RefreshCast()
     elseif event == "RUNE_POWER_UPDATE" then
         Bars:RefreshClassPower()
+    elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
+        -- For power events the second payload argument is the changed power token, not a cast ID.
+        local _, primaryToken = UnitPowerType("player")
+        if castID == primaryToken then Bars:RefreshPower() end
+        local _, classToken = UnitClass("player")
+        local info = CLASS_POWER[classToken]
+        if info and castID == info.token then Bars:RefreshClassPower() end
     elseif event:find("^UNIT_") then
         Bars:RefreshPower()
         Bars:RefreshClassPower()
