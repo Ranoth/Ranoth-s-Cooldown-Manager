@@ -10,7 +10,6 @@ local Skin = RanothsCooldownManager:NewModule("Skin", "AceEvent-3.0")
 
 local Viewers = RanothsCooldownManager:GetModule("Viewers")
 local Options = RanothsCooldownManager:GetModule("Options")
-local TextShadow = RanothsCooldownManager:GetModule("TextShadow")
 local LSM = LibStub("LibSharedMedia-3.0")
 
 Skin.KEYS = { "Essential", "Utility", "BuffIcon" }
@@ -28,8 +27,6 @@ local function viewerDefaults()
         borderColor = { r = 0, g = 0, b = 0, a = 1 },
         countSize = 0, -- 0 = Blizzard's size
         countFont = "", -- LibSharedMedia font name, "" = Blizzard's font
-        textShadow = false,
-        shadowOffset = 2,
         textOutline = "", -- "" = Blizzard's, "NONE", "OUTLINE", "THICKOUTLINE"
         activeOpaque = false, -- icons whose aura is running ignore the viewer's opacity and show at 100%
         itemCount = true, -- show remaining uses on healthstones
@@ -75,7 +72,7 @@ end
 
 local function isNeutral(s)
     return not s.square and s.zoom == 0 and s.borderSize == 0 and s.countSize == 0 and s.countFont == ""
-        and s.textOutline == "" and not s.textShadow
+        and s.textOutline == ""
 end
 
 local function findRegions(item)
@@ -149,10 +146,6 @@ local function outlineFlags(s, original)
     return original
 end
 
-local function applyShadow(text, s, poll, owner)
-    TextShadow:Set(text, s.textShadow, s.shadowOffset, poll, owner)
-end
-
 --- Outline of the cooldown countdown; its font and size are left to Blizzard.
 local function applyCountdownOutline(text, st, s)
     if not text then return end
@@ -214,8 +207,6 @@ local function applyItem(item, s, countdown)
     end
 
     applyCountdownOutline(countdown, st, s)
-    applyShadow(text, s)
-    applyShadow(countdown, s, item.Cooldown, item)
 end
 
 local rawSetAlpha = getmetatable(UIParent).__index.SetAlpha
@@ -350,7 +341,6 @@ local function applyItemCount(item, s, style)
         font, size, flags = font or "Fonts\\ARIALN.TTF", size or 16, flags or "OUTLINE"
         local path = s.countFont ~= "" and LSM:Fetch("font", s.countFont, true) or nil
         text:SetFont(path or font, s.countSize > 0 and s.countSize or size, outlineFlags(s, flags))
-        applyShadow(text, s)
     end
     if text.lastCount ~= count then
         text:SetText(count)
@@ -532,28 +522,11 @@ function Skin:GetOptions()
                     get = function() return s().countFont end,
                     set = set("countFont"),
                 },
-                textShadow = {
-                    type = "toggle",
-                    order = 6,
-                    name = "Text shadow",
-                    desc = "Add a shadow to the cooldown countdown and the stack count.",
-                    get = function() return s().textShadow end,
-                    set = set("textShadow"),
-                },
-                shadowOffset = {
-                    type = "range",
-                    order = 6.1,
-                    name = "Shadow offset",
-                    min = 1, max = 4, step = 1,
-                    disabled = function() return not s().textShadow end,
-                    get = function() return s().shadowOffset end,
-                    set = set("shadowOffset"),
-                },
                 textOutline = {
                     type = "select",
                     order = 6.2,
                     name = "Text outline",
-                    desc = "Blizzard's text has a black outline, which hides most of a shadow. Pick \"None\" for a pure drop shadow.",
+                    desc = "Outline of the cooldown countdown and the stack count.",
                     values = { [""] = "Blizzard default", NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick outline" },
                     sorting = { "", "NONE", "OUTLINE", "THICKOUTLINE" },
                     get = function() return s().textOutline end,

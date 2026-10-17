@@ -1,7 +1,6 @@
 --- TextShadow module for RanothsCooldownManager.
 --- Drop shadows drawn as a black copy of a FontString, placed just under it.
---- The native FontString shadow is not used: it widens the text, which pushes right-aligned text to the side,
---- and on the cooldown viewer icons it ends up behind the icon art.
+--- The native FontString shadow is not used: it widens the text, which pushes right-aligned text to the side.
 --- @module "TextShadow"
 
 local addon_name, _ = ...
@@ -9,33 +8,6 @@ local RanothsCooldownManager = LibStub("AceAddon-3.0"):GetAddon(addon_name)
 local TextShadow = RanothsCooldownManager:NewModule("TextShadow")
 
 local shadows = setmetatable({}, { __mode = "k" }) -- text -> shadow FontString
-local polled = setmetatable({}, { __mode = "k" }) -- texts updated from C code, which no Lua hook can see
-local countdowns = setmetatable({}, { __mode = "k" })
-local countdownHooked = setmetatable({}, { __mode = "k" })
-local countdownOwners = setmetatable({}, { __mode = "k" })
-local ownerHooked = setmetatable({}, { __mode = "k" })
-local poller = CreateFrame("Frame")
-local onPoll
-local function refreshPoller()
-    poller:SetScript("OnUpdate", next(polled) and onPoll or nil)
-end
-
-local function wakeCountdown(cooldown)
-    local text = countdowns[cooldown]
-    local shadow = text and shadows[text]
-    if not shadow or not shadow.enabled then return end
-    polled[text] = true
-    refreshPoller()
-end
-
-local function stopCountdown(cooldown)
-    local text = countdowns[cooldown]
-    if not text then return end
-    polled[text] = nil
-    local shadow = shadows[text]
-    if shadow then shadow:SetText(""); shadow.hasText = false end
-    refreshPoller()
-end
 
 local LAYER_BELOW = { HIGHLIGHT = "OVERLAY", OVERLAY = "ARTWORK", ARTWORK = "BORDER", BORDER = "BACKGROUND" }
 
@@ -43,16 +15,7 @@ local function syncShown(text)
     local shadow = shadows[text]
     if not shadow or not shadow.enabled then return end
     -- This API accepts secret booleans; SetShown does not.
-    local owner = countdownOwners[text]
-    if owner then
-        -- The cooldown engine can retain text while suppressing its rendering for the GCD.
-        local gcd = owner.isOnGCD
-        if type(gcd) ~= "boolean" then gcd = false end
-        shadow:SetAlphaFromBoolean(gcd, 0, text:GetAlpha())
-        shadow:SetAlphaFromBoolean(text:IsShown(), shadow:GetAlpha(), 0)
-    else
-        shadow:SetAlphaFromBoolean(text:IsShown(), text:GetAlpha(), 0)
-    end
+    shadow:SetAlphaFromBoolean(text:IsShown(), text:GetAlpha(), 0)
 end
 
 local function syncText(text)
@@ -98,31 +61,11 @@ local function create(text)
     return shadow
 end
 
-local elapsedSince = 0
-onPoll = function(_, elapsed)
-    elapsedSince = elapsedSince + elapsed
-    if elapsedSince < 0.05 then return end
-    elapsedSince = 0
-    for text in pairs(polled) do
-        local value = text:GetText()
-        if not issecretvalue(value) and (value == nil or value == "") then
-            polled[text] = nil
-            syncText(text)
-        else
-            syncText(text)
-            syncShown(text)
-        end
-    end
-    refreshPoller()
-end
-
 --- Turn the drop shadow of a FontString on or off. The text itself is never moved.
 --- @param text FontString
 --- @param enabled boolean
 --- @param offset number|nil Shadow distance in pixels, down and to the right (default 2)
---- @param poll Cooldown|nil Countdown owner; its lifecycle wakes polling, blank countdowns stop it.
---- @param owner Frame|nil Viewer item whose GCD state suppresses countdown rendering.
-function TextShadow:Set(text, enabled, offset, poll, owner)
+function TextShadow:Set(text, enabled, offset)
     if not text then return end
     local shadow = shadows[text]
     if not enabled then
@@ -130,21 +73,10 @@ function TextShadow:Set(text, enabled, offset, poll, owner)
             shadow.enabled = false
             shadow:Hide()
         end
-        polled[text] = nil
-        refreshPoller()
         return
     end
 
     shadow = shadow or create(text)
-    countdownOwners[text] = owner
-    if owner and not ownerHooked[owner] and owner.CacheCooldownValues then
-        ownerHooked[owner] = true
-        hooksecurefunc(owner, "CacheCooldownValues", function(item)
-            local cooldown = item.Cooldown
-            local countdown = cooldown and countdowns[cooldown]
-            if countdown then syncShown(countdown) end
-        end)
-    end
     shadow.enabled = true
     shadow:Show()
     offset = offset or 2
@@ -164,23 +96,4 @@ function TextShadow:Set(text, enabled, offset, poll, owner)
     syncFont(text)
     syncText(text)
     syncShown(text)
-
-    if poll then
-        countdowns[poll] = text
-        if not countdownHooked[poll] then
-            countdownHooked[poll] = true
-            for _, method in ipairs({ "SetCooldown", "SetCooldownDuration", "SetCooldownFromDurationObject",
-                "SetCooldownFromExpirationTime", "SetHideCountdownNumbers" }) do
-                if poll[method] then hooksecurefunc(poll, method, wakeCountdown) end
-            end
-            if poll.Clear then hooksecurefunc(poll, "Clear", stopCountdown) end
-            poll:HookScript("OnShow", wakeCountdown)
-            poll:HookScript("OnHide", stopCountdown)
-            poll:HookScript("OnCooldownDone", stopCountdown)
-        end
-        wakeCountdown(poll)
-    else
-        polled[text] = nil
-        refreshPoller()
-    end
 end
