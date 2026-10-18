@@ -71,6 +71,7 @@ local defaults = {
             primaryPower = false, -- show the main resource here and mana on the primary power bar
             showText = false,
             textFormat = "value",
+            wholeShards = true, -- Affliction/Demonology soul shards fill only when complete, hiding regen fragments
         }),
     },
 }
@@ -195,6 +196,7 @@ local function powerColor(token, powerType)
 end
 
 local MANA = Enum.PowerType.Mana
+local DESTRUCTION = 3 -- Destruction builds shards from fragments, so it always shows them
 
 --- Segmented class power for the current class, spec and form, or nil.
 local function classPowerInfo()
@@ -655,9 +657,10 @@ function Bars:RefreshClassPower()
     if info.runes then
         updateRunes(frame)
     else
-        local divisor = info.fractional and UnitPowerDisplayMod(info.type) or 1
+        local fractional = info.fractional and not (s.wholeShards and GetSpecialization() ~= DESTRUCTION)
+        local divisor = fractional and UnitPowerDisplayMod(info.type) or 1
         if not divisor or divisor == 0 then divisor = 1 end
-        local current = UnitPower("player", info.type, info.fractional)
+        local current = UnitPower("player", info.type, fractional)
         local partial = false
         for i = 1, max do
             local ok2, value = pcall(segmentValue, current, divisor, i)
@@ -665,13 +668,13 @@ function Bars:RefreshClassPower()
             if value > 0 and value < 1 then partial = true end
             frame.segments[i]:SetValue(value)
         end
-        local whole = info.fractional and UnitPower("player", info.type) or current
+        local whole = fractional and UnitPower("player", info.type) or current
         if issecretvalue(whole) or frame.lastText ~= whole then
             frame.lastText = not issecretvalue(whole) and whole or nil
             setClassText(frame, s, info.type, whole, max)
         end
         -- UNIT_POWER_* can skip the last fragment change, so poll while a shard is partially filled.
-        if info.fractional and partial then
+        if fractional and partial then
             if not frame.pollElapsed then
                 frame.pollElapsed = 0
                 frame:SetScript("OnUpdate", function(f, elapsed)
@@ -1039,6 +1042,15 @@ function Bars:GetOptions()
                 get = function() return s().primaryPower end, set = set("primaryPower"),
             }
             group.args.inactive = color(22, "Empty segment color", "inactive", nil)
+            group.args.wholeShards = {
+                type = "toggle", order = 1.5, name = "Whole shards only", width = "double",
+                desc = "Affliction and Demonology: fill a soul shard segment only once the shard is complete, "
+                    .. "hiding partial fragments from out-of-combat regeneration.",
+                hidden = function()
+                    return select(2, UnitClass("player")) ~= "WARLOCK" or GetSpecialization() == DESTRUCTION
+                end,
+                get = function() return s().wholeShards end, set = set("wholeShards"),
+            }
             group.args.dividerSize = {
                 type = "range", order = 23, name = "Divider thickness",
                 desc = "Line drawn between segments, in the border color. 0 hides it.",
