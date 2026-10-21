@@ -49,6 +49,13 @@ local commandList = {
         func = Debug.Toggle,
         help = "Toggles debug mode"
     },
+    ["glowtrace"] = {
+        func = function(args)
+            RanothsCooldownManager:GetModule("NativeGlows"):TraceCommand(args:lower())
+        end,
+        help = "Captures the last 100 glow lifecycle events for troubleshooting",
+        argsHelp = "[start|stop]"
+    },
     ["resources"] = {
         func = function()
             RanothsCooldownManager:GetModule("Resources"):Describe()

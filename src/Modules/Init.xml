@@ -4,6 +4,7 @@
 	<Script file="IconLayout.lua"/>
 	<Script file="Skin.lua"/>
 	<Script file="Glow.lua"/>
+	<Script file="NativeGlows.lua"/>
 	<Script file="Bars.lua"/>
 	<Script file="ResourceSkin.lua"/>
 </Ui>

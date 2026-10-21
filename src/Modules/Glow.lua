@@ -113,10 +113,10 @@ local function onUpdate(frame, elapsed)
     draw(frame)
 end
 
-local function create(item)
-    local frame = CreateFrame("Frame", nil, item)
-    frame:SetAllPoints(item.Icon or item)
-    frame:SetFrameLevel(item:GetFrameLevel() + GLOW_LEVEL_OFFSET)
+local function create(parent, anchor, level)
+    local frame = CreateFrame("Frame", nil, parent)
+    frame:SetAllPoints(anchor)
+    frame:SetFrameLevel(level)
     frame:EnableMouse(false)
     frame.lines = {}
     frame.phase, frame.elapsed = 0, 0
@@ -128,6 +128,37 @@ local function create(item)
     end
     frame:Hide()
     return frame
+end
+
+--- Moving pixel dashes inside the border of `anchor`, shared with other native-glow replacements.
+--- Parent visibility drives the animation: OnUpdate only runs while the parent is shown.
+--- @return table frame Call Glow.StartDashes/Glow.StopDashes on it.
+function Glow.CreateDashes(parent, anchor, level)
+    return create(parent, anchor, level)
+end
+
+--- @param settings table { thickness, length, speed }
+--- @param color table { r, g, b, a }
+function Glow.StartDashes(frame, settings, key, color)
+    frame.settings, frame.viewerKey = settings, key
+    local width, height = frame:GetWidth(), frame:GetHeight()
+    if not issecretvalue(width) and not issecretvalue(height) and width > 0 and height > 0 then
+        frame.readableWidth, frame.readableHeight = width, height
+    end
+    for _, line in ipairs(frame.lines) do line:SetVertexColor(color.r, color.g, color.b, color.a or 1) end
+    if not draw(frame) then
+        frame:SetScript("OnUpdate", nil)
+        frame:Hide()
+        return false
+    end
+    frame:SetScript("OnUpdate", onUpdate)
+    frame:Show()
+    return true
+end
+
+function Glow.StopDashes(frame)
+    frame:SetScript("OnUpdate", nil)
+    frame:Hide()
 end
 
 local function apply(item)
@@ -148,7 +179,7 @@ local function apply(item)
     if key then Skin:FitNativeEffect(item, alert, key) end
     suppress(alert, enabled)
     if active then
-        st.frame = st.frame or create(item)
+        st.frame = st.frame or create(item, item.Icon or item, item:GetFrameLevel() + GLOW_LEVEL_OFFSET)
         local frame = st.frame
         frame.settings = s
         frame.viewerKey = key
@@ -175,6 +206,8 @@ end
 local function setActive(item, active)
     local st = states[item]
     if not st then return end
+    local NativeGlows = Addon:GetModule("NativeGlows", true)
+    if NativeGlows then NativeGlows:TracePixel(item, active) end
     st.active = active
     apply(item)
 end
@@ -224,10 +257,11 @@ function Glow:OnProfileRefresh()
 end
 
 function Glow:GetOptions()
+    local NativeGlows = Addon:GetModule("NativeGlows", true)
     local args = {
         description = {
             type = "description", order = 1,
-            name = "Replace Blizzard's proc/activation alerts with moving pixel lines. Only glowing icons animate. Action-bar alerts are unchanged.",
+            name = "Choose between Blizzard's glows and square custom ones for each icon effect. Only active effects animate. Action-bar alerts are unchanged.",
         },
     }
     for i, key in ipairs(KEYS) do
@@ -238,51 +272,58 @@ function Glow:GetOptions()
                 self:OnProfileRefresh()
             end
         end
-        args[key] = {
-            type = "group", inline = true, order = i + 1, name = LABELS[key],
-            args = {
-                enabled = {
-                    type = "toggle", order = 1, name = "Custom proc glow",
-                    get = function() return s().enabled end, set = set("enabled"),
-                },
-                preview = {
-                    type = "toggle", order = 1.5, name = "Preview glow",
-                    desc = "Show the glow on this viewer's icons without requiring a proc. Not saved between reloads.",
-                    disabled = function() return not s().enabled end,
-                    get = function() return previews[key] == true end,
-                    set = function(_, value)
-                        previews[key] = value
-                        self:OnProfileRefresh()
-                    end,
-                },
-                color = {
-                    type = "color", order = 2, name = "Glow color", hasAlpha = true,
-                    disabled = function() return not s().enabled end,
-                    get = function() local c = s().color; return c.r, c.g, c.b, c.a end,
-                    set = function(_, r, g, b, a)
-                        s().color = { r = r, g = g, b = b, a = a }
-                        self:OnProfileRefresh()
-                    end,
-                },
-                thickness = {
-                    type = "range", order = 3, name = "Line thickness", min = 1, max = 5, step = 1,
-                    disabled = function() return not s().enabled end,
-                    get = function() return s().thickness end, set = set("thickness"),
-                },
-                length = {
-                    type = "range", order = 4, name = "Line length", min = 2, max = 20, step = 1,
-                    disabled = function() return not s().enabled end,
-                    get = function() return s().length end, set = set("length"),
-                },
-                speed = {
-                    type = "range", order = 5, name = "Speed", min = 0.05, max = 1, step = 0.05,
-                    disabled = function() return not s().enabled end,
-                    get = function() return s().speed end, set = set("speed"),
+        local viewerArgs = {
+            proc = {
+                type = "group", inline = true, order = 1, name = "Proc glow",
+                args = {
+                    enabled = {
+                        type = "toggle", order = 1, name = "Custom proc glow",
+                        desc = "Replace Blizzard's proc/activation alert with moving pixel lines.",
+                        get = function() return s().enabled end, set = set("enabled"),
+                    },
+                    preview = {
+                        type = "toggle", order = 1.5, name = "Preview glow",
+                        desc = "Show the glow on this viewer's icons without requiring a proc. Not saved between reloads.",
+                        disabled = function() return not s().enabled end,
+                        get = function() return previews[key] == true end,
+                        set = function(_, value)
+                            previews[key] = value
+                            self:OnProfileRefresh()
+                        end,
+                    },
+                    color = {
+                        type = "color", order = 2, name = "Glow color", hasAlpha = true,
+                        disabled = function() return not s().enabled end,
+                        get = function() local c = s().color; return c.r, c.g, c.b, c.a end,
+                        set = function(_, r, g, b, a)
+                            s().color = { r = r, g = g, b = b, a = a }
+                            self:OnProfileRefresh()
+                        end,
+                    },
+                    thickness = {
+                        type = "range", order = 3, name = "Line thickness", min = 1, max = 5, step = 1,
+                        disabled = function() return not s().enabled end,
+                        get = function() return s().thickness end, set = set("thickness"),
+                    },
+                    length = {
+                        type = "range", order = 4, name = "Line length", min = 2, max = 20, step = 1,
+                        disabled = function() return not s().enabled end,
+                        get = function() return s().length end, set = set("length"),
+                    },
+                    speed = {
+                        type = "range", order = 5, name = "Speed", min = 0.05, max = 1, step = 0.05,
+                        disabled = function() return not s().enabled end,
+                        get = function() return s().speed end, set = set("speed"),
+                    },
                 },
             },
         }
+        if NativeGlows then
+            for name, option in pairs(NativeGlows:GetViewerOptions(key)) do viewerArgs[name] = option end
+        end
+        args[key] = { type = "group", order = i + 1, name = LABELS[key], args = viewerArgs }
     end
-    return { type = "group", name = "Icon glows", args = args }
+    return { type = "group", name = "Icon glows", childGroups = "tab", args = args }
 end
 
 function Glow:OnInitialize()

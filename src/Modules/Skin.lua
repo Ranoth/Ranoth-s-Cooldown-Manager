@@ -47,17 +47,26 @@ local applied = setmetatable({}, { __mode = "k" })
 local revisions = {}
 local nativeEffects = setmetatable({}, { __mode = "k" })
 
---- Fit native ready/proc artwork to the area inside our border without replacing its animation.
-function Skin:FitNativeEffect(item, effect, key)
+--- Fit native ready/proc/pandemic/alert artwork to the area inside our border without replacing its animation.
+--- @param force boolean|nil Refit even if cached: pooled frames are re-anchored by Blizzard when acquired.
+--- @param levelOffset number|nil Extra level above the base, keeping Blizzard's order between stacked alerts.
+--- @param padding number|nil Transparent margin baked into the artwork, which is pushed out so the visible art lines up.
+function Skin:FitNativeEffect(item, effect, key, force, levelOffset, padding)
     if not effect then return end
     local icon = item.Icon or item
-    local inset = self.db.profile[key].borderSize
-    local level = item:GetFrameLevel() + 7
+    local inset = self.db.profile[key].borderSize - (padding or 0)
+    local level = item:GetFrameLevel() + 7 + (levelOffset or 0)
+    local strata = item:GetFrameStrata()
     local previous = nativeEffects[effect]
-    if previous and previous.icon == icon and previous.inset == inset and previous.level == level then return end
+    if not force and previous and previous.icon == icon and previous.inset == inset and previous.level == level
+        and previous.strata == strata then
+        return
+    end
     effect:ClearAllPoints()
     effect:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, -inset)
     effect:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, inset)
+    -- Pandemic frames carry their own MEDIUM strata, which would ignore the Layout strata option.
+    if effect:GetFrameStrata() ~= strata then effect:SetFrameStrata(strata) end
     effect:SetFrameLevel(level)
     effect:SetClipsChildren(true)
     for _, name in ipairs({ "Flipbook", "ProcStartFlipbook", "ProcLoopFlipbook", "ProcAltGlow" }) do
@@ -67,7 +76,56 @@ function Skin:FitNativeEffect(item, effect, key)
             texture:SetAllPoints(effect)
         end
     end
-    nativeEffects[effect] = { icon = icon, inset = inset, level = level }
+    nativeEffects[effect] = { icon = icon, inset = inset, level = level, strata = strata }
+end
+
+local effectKeys = setmetatable({}, { __mode = "k" }) -- item -> viewer key, for hooks fired outside Apply
+local effectHooked = setmetatable({}, { __mode = "k" })
+local pandemicFitted = setmetatable({}, { __mode = "k" })
+-- Blizzard anchors the pandemic artwork 6px outside the icon so its ring lands on the icon edge.
+local PANDEMIC_PADDING = 6
+
+--- Visual alerts (marching ants, flash) chosen in Cooldown Manager's alert settings.
+local function fitAlerts(item, force)
+    local key = effectKeys[item]
+    local container = key and item.alertContainer
+    if not container then return end
+    for index, alert in ipairs(container) do
+        Skin:FitNativeEffect(item, alert, key, force, index)
+    end
+end
+
+-- Blizzard checks the pandemic state every frame; only a newly acquired frame needs fitting.
+local function fitPandemic(item)
+    local key, frame = effectKeys[item], item.PandemicIcon
+    if not key or not frame or pandemicFitted[item] == frame then return end
+    pandemicFitted[item] = frame
+    Skin:FitNativeEffect(item, frame, key, true, nil, PANDEMIC_PADDING)
+end
+
+local function hookNativeEffects(item, key)
+    effectKeys[item] = key
+    if effectHooked[item] then return end
+    effectHooked[item] = true
+    if item.ShowPandemicStateFrame then hooksecurefunc(item, "ShowPandemicStateFrame", fitPandemic) end
+    if item.HidePandemicStateFrame then
+        hooksecurefunc(item, "HidePandemicStateFrame", function(i) pandemicFitted[i] = nil end)
+    end
+    -- AddAlert and RemoveAlert both re-sort through UpdateAlerts, after the alert was anchored.
+    if item.UpdateAlerts then hooksecurefunc(item, "UpdateAlerts", function(i) fitAlerts(i, true) end) end
+end
+
+--- Pandemic, visual alerts and the buff debuff border, which Blizzard draws outside the icon.
+local function fitNativeEffects(item, key)
+    hookNativeEffects(item, key)
+    Skin:FitNativeEffect(item, item.CooldownFlash, key)
+    Skin:FitNativeEffect(item, item.SpellActivationAlert, key)
+    Skin:FitNativeEffect(item, item.DebuffBorder, key)
+    if item.PandemicIcon then
+        pandemicFitted[item] = item.PandemicIcon
+        Skin:FitNativeEffect(item, item.PandemicIcon, key, nil, nil, PANDEMIC_PADDING)
+    end
+    fitAlerts(item)
 end
 
 local function isNeutral(s)
@@ -370,8 +428,7 @@ function Skin:Apply(key, incremental)
     local items = Viewers:GetItems(key)
     alphaItems[key] = items
     for _, item in ipairs(items) do
-        self:FitNativeEffect(item, item.CooldownFlash, key)
-        self:FitNativeEffect(item, item.SpellActivationAlert, key)
+        fitNativeEffects(item, key)
         local countdown = countdownFontString(item)
         local text = countFontString(item)
         local previous = applied[item]
