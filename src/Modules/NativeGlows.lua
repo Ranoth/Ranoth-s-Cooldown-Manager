@@ -133,7 +133,11 @@ local function styleEdge(frame, item, key, color, thickness, level)
             if line.horizontal then line:SetHeight(thickness) else line:SetWidth(thickness) end
         end
     end
-    frame.edgeStyle = { icon = icon, inset = inset, r = color.r, g = color.g, b = color.b, a = alpha, thickness = thickness }
+    previous = previous or {}
+    previous.icon, previous.inset = icon, inset
+    previous.r, previous.g, previous.b, previous.a = color.r, color.g, color.b, alpha
+    previous.thickness = thickness
+    frame.edgeStyle = previous
 end
 
 --- Bounces between two alphas on the shared clock: showing again (or Blizzard re-acquiring its pooled frame)
@@ -151,7 +155,9 @@ end
 
 local function setPulse(frame, from, to, duration)
     if from then
-        frame.pulse = { from = from, to = to, duration = duration }
+        local pulse = frame.pulse or {}
+        pulse.from, pulse.to, pulse.duration = from, to, duration
+        frame.pulse = pulse
         frame.pulseElapsed = UPDATE_INTERVAL
         frame:SetScript("OnUpdate", updatePulse)
         updatePulse(frame, 0)
@@ -174,7 +180,9 @@ local function stylePandemic(item)
     local level = frame:GetFrameLevel()
     local done = pandemicStyled[frame]
     if done and done.item == item and done.revision == revision and done.level == level then return end
-    pandemicStyled[frame] = { item = item, revision = revision, level = level }
+    done = done or {}
+    done.item, done.revision, done.level = item, revision, level
+    pandemicStyled[frame] = done
     local s, key = settings(item, "pandemic")
     local custom = s and s.custom
     traceEvent(item, "pandemic", "style", custom and "custom" or "native")
@@ -265,6 +273,7 @@ end
 
 local READY_PIECES_PER_EDGE = 16
 local READY_LINE_LENGTH = 1 / 8 -- Fraction of the perimeter occupied by each moving line.
+local readyCurveSets = setmetatable({}, { __mode = "v" })
 
 local function readyCurve(duration, midpoint)
     local curve = C_CurveUtil.CreateCurve()
@@ -287,6 +296,23 @@ local function readyCurve(duration, midpoint)
     return curve
 end
 
+local function readyCurves(duration, pathWidth, pathHeight)
+    local horizontalFraction = pathWidth / (pathWidth + pathHeight)
+    local key = string.format("%.17g:%.17g", duration, horizontalFraction)
+    local curves = readyCurveSets[key]
+    if curves then return curves end
+    curves = {}
+    for i = 1, 2 * READY_PIECES_PER_EDGE do
+        local position = ((i - 1) % READY_PIECES_PER_EDGE + 0.5) / READY_PIECES_PER_EDGE
+        local midpoint = i <= READY_PIECES_PER_EDGE and position * horizontalFraction / 2
+            or (horizontalFraction + position * (1 - horizontalFraction)) / 2
+        curves[i] = readyCurve(duration, midpoint)
+    end
+    -- Icons retain their active set; unused settings can be collected, including the cache entry.
+    readyCurveSets[key] = curves
+    return curves
+end
+
 local function styleReady(item, s, key)
     local size = iconSizes[item]
     if not size then return false end
@@ -295,7 +321,6 @@ local function styleReady(item, s, key)
     if width <= 0 or height <= 0 then return false end
     local thickness = math.min(s.thickness, width, height)
     local pathWidth, pathHeight = width - thickness, height - thickness
-    local perimeter = 2 * (pathWidth + pathHeight)
     if pathWidth <= 0 or pathHeight <= 0 then return false end
     local square = edges[item]
     if not square then
@@ -317,32 +342,45 @@ local function styleReady(item, s, key)
         square:Hide()
         edges[item] = square
     end
-    square:ClearAllPoints()
-    square:SetAllPoints(item.Icon or item)
-    square:SetAlpha(1)
+    local icon = item.Icon or item
     local previous = square.readyStyle
-    local changed = not previous or previous.width ~= width or previous.height ~= height
+    local geometryChanged = not previous or previous.width ~= width or previous.height ~= height
+        or previous.thickness ~= thickness or previous.inset ~= inset
+    local curvesChanged = not square.readyCurves or not previous or previous.width ~= width or previous.height ~= height
         or previous.thickness ~= thickness or previous.duration ~= s.duration
-    for i, piece in ipairs(square.pieces) do
-        local horizontal = i <= READY_PIECES_PER_EDGE
-        local index = (i - 1) % READY_PIECES_PER_EDGE
-        local length = (horizontal and pathWidth or pathHeight) / READY_PIECES_PER_EDGE
-        local midpoint = (index + 0.5) * length
-        if changed then
-            piece.curve = readyCurve(s.duration, (horizontal and midpoint or pathWidth + midpoint) / perimeter)
-        end
-        for side, line in ipairs(piece) do
-            local x = horizontal and midpoint or pathWidth
-            local y = horizontal and 0 or midpoint
-            if side == 2 then x, y = pathWidth - x, pathHeight - y end
-            line:ClearAllPoints()
-            line:SetPoint("CENTER", square, "TOPLEFT", inset + thickness / 2 + x, -inset - thickness / 2 - y)
-            line:SetSize(horizontal and length + thickness or thickness,
-                horizontal and thickness or length + thickness)
-            line:SetVertexColor(s.color.r, s.color.g, s.color.b, s.color.a)
+    local colorChanged = not previous or previous.r ~= s.color.r or previous.g ~= s.color.g
+        or previous.b ~= s.color.b or previous.a ~= s.color.a
+    if not previous or previous.icon ~= icon then
+        square:ClearAllPoints()
+        square:SetAllPoints(icon)
+    end
+    if curvesChanged then square.readyCurves = readyCurves(s.duration, pathWidth, pathHeight) end
+    if geometryChanged or curvesChanged or colorChanged then
+        for i, piece in ipairs(square.pieces) do
+            if curvesChanged then piece.curve = square.readyCurves[i] end
+            local horizontal = i <= READY_PIECES_PER_EDGE
+            local index = (i - 1) % READY_PIECES_PER_EDGE
+            local length = (horizontal and pathWidth or pathHeight) / READY_PIECES_PER_EDGE
+            local midpoint = (index + 0.5) * length
+            for side, line in ipairs(piece) do
+                if geometryChanged then
+                    local x = horizontal and midpoint or pathWidth
+                    local y = horizontal and 0 or midpoint
+                    if side == 2 then x, y = pathWidth - x, pathHeight - y end
+                    line:ClearAllPoints()
+                    line:SetPoint("CENTER", square, "TOPLEFT", inset + thickness / 2 + x, -inset - thickness / 2 - y)
+                    line:SetSize(horizontal and length + thickness or thickness,
+                        horizontal and thickness or length + thickness)
+                end
+                if colorChanged then line:SetVertexColor(s.color.r, s.color.g, s.color.b, s.color.a) end
+            end
         end
     end
-    square.readyStyle = { width = width, height = height, thickness = thickness, duration = s.duration }
+    previous = previous or {}
+    previous.width, previous.height, previous.thickness, previous.duration = width, height, thickness, s.duration
+    previous.icon, previous.inset = icon, inset
+    previous.r, previous.g, previous.b, previous.a = s.color.r, s.color.g, s.color.b, s.color.a
+    square.readyStyle = previous
     raiseReady(item)
     return true
 end
@@ -468,6 +506,9 @@ local function styleFlash(item)
         refreshReady(item)
     elseif edges[item] then
         stopReady(item)
+        local square = edges[item]
+        square.readyCurves = nil
+        for _, piece in ipairs(square.pieces) do piece.curve = nil end
     end
     flash.Flipbook:SetShown(not custom)
 end
@@ -540,7 +581,9 @@ local function refreshItem(item)
     local icon = item.Icon or item
     local width, height = icon:GetWidth(), icon:GetHeight()
     if not issecretvalue(width) and not issecretvalue(height) and width > 0 and height > 0 then
-        iconSizes[item] = { width, height }
+        local size = iconSizes[item] or {}
+        size[1], size[2] = width, height
+        iconSizes[item] = size
     end
     stylePandemic(item)
     styleAlerts(item)
