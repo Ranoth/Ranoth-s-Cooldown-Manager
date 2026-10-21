@@ -1,6 +1,9 @@
---- Square, customizable replacements for Blizzard's remaining cooldown-icon effects:
+--- Square, customizable replacements for Blizzard's cooldown-icon effects:
 --- pandemic glow, Cooldown Manager visual alerts (marching ants / flash), ready flash and debuff border.
---- Blizzard drives effect visibility and ready-flash timing.
+--- Each replacement is a child of the Blizzard frame it replaces, so Blizzard alone decides when it is visible.
+--- Pandemic frames and alerts use AnimateWhileShownTemplate, which plays and stops the animation groups of every
+--- descendant, so replacements never own animation groups: pulses are computed from the clock instead.
+--- The ready flash follows the cooldown itself, because Blizzard suppresses its own flash while the GCD hides it.
 local addon_name = ...
 local Addon = LibStub("AceAddon-3.0"):GetAddon(addon_name)
 local NativeGlows = Addon:NewModule("NativeGlows", "AceEvent-3.0")
@@ -9,6 +12,7 @@ local Skin = Addon:GetModule("Skin")
 local Glow = Addon:GetModule("Glow")
 local KEYS = { "Essential", "Utility", "BuffIcon" }
 local WHITE = "Interface\\Buttons\\WHITE8X8"
+local UPDATE_INTERVAL = 1 / 30
 
 local function viewerDefaults()
     return {
@@ -24,16 +28,22 @@ end
 
 local defaults = { profile = { Essential = viewerDefaults(), Utility = viewerDefaults(), BuffIcon = viewerDefaults() } }
 
-local owners = setmetatable({}, { __mode = "k" }) -- item -> viewer key
-local hooked = setmetatable({}, { __mode = "k" })
-local edges = setmetatable({}, { __mode = "k" }) -- Blizzard effect frame -> our square edge
-local dashes = setmetatable({}, { __mode = "k" }) -- marching-ants alert -> our pixel dashes
-local pandemicStyled = setmetatable({}, { __mode = "k" }) -- pandemic frame -> { item, revision }
-local debuffColors = setmetatable({}, { __mode = "k" }) -- item -> last dispel color
-local iconSizes = setmetatable({}, { __mode = "k" }) -- item -> { width, height } read out of combat
+local function weak() return setmetatable({}, { __mode = "k" }) end
+local owners = weak() -- item -> viewer key
+local hooked = weak()
+local edges = weak() -- Blizzard effect frame (or item, for the ready flash) -> our square edge
+local dashes = weak() -- marching-ants alert -> our pixel dashes
+local pandemicStyled = weak() -- pandemic frame -> { item, revision, level }
+local alertItems = weak() -- alert -> item it is styled for
+local iconSizes = weak() -- item -> { width, height } read out of combat
+local readyDurations = weak() -- item -> duration object of the tracked cooldown
+local readyCurves = {} -- brighten duration -> curve of seconds remaining -> alpha
 local revision = 0
+
+-- Tracing ------------------------------------------------------------------------------------
+
 local trace
-local traceIDs = setmetatable({}, { __mode = "k" })
+local traceIDs = weak()
 local nextTraceID = 0
 local TRACE_LIMIT = 100
 
@@ -64,12 +74,7 @@ function NativeGlows:TraceCommand(arg)
     local Printer = Addon:GetModule("Printer")
     if arg == "start" then
         trace = { start = GetTime(), events = {} }
-        for item in pairs(owners) do
-            local s = self.db.profile[owners[item]]
-            traceEvent(item, "ready", "custom", s.flash.custom)
-            traceEvent(item, "pandemic", "custom", s.pandemic.custom)
-        end
-        Printer:Print("Glow tracing started. Reproduce the flicker, then use /rcm glowtrace stop.")
+        Printer:Print("Glow tracing started. Reproduce the issue, then use /rcm glowtrace stop.")
     elseif arg == "stop" then
         if not trace then
             Printer:Print("Glow tracing is not running. Use /rcm glowtrace start first.")
@@ -84,26 +89,14 @@ function NativeGlows:TraceCommand(arg)
     end
 end
 
-local function traceEdge(frame, item, effect)
-    frame.traceItem = item
-    if frame.traceHooked then return end
-    frame.traceHooked = true
-    frame:HookScript("OnShow", function() traceEvent(frame.traceItem, effect, "edge-show") end)
-    frame:HookScript("OnHide", function() traceEvent(frame.traceItem, effect, "edge-hide") end)
-    hooksecurefunc(frame, "SetAlpha", function(_, alpha) traceEvent(frame.traceItem, effect, "edge-alpha", alpha) end)
-    hooksecurefunc(frame.anim, "Play", function() traceEvent(frame.traceItem, effect, "pulse-play") end)
-    if frame.anim.PlaySynced then
-        hooksecurefunc(frame.anim, "PlaySynced", function() traceEvent(frame.traceItem, effect, "pulse-play-synced") end)
-    end
-    hooksecurefunc(frame.anim, "Stop", function() traceEvent(frame.traceItem, effect, "pulse-stop") end)
-end
+-- Shared -------------------------------------------------------------------------------------
 
 local function settings(item, effect)
     local key = owners[item]
     return key and NativeGlows:IsEnabled() and NativeGlows.db.profile[key][effect], key
 end
 
---- Four solid lines inside the icon border, with an optional alpha animation.
+--- Four solid lines inside the icon border.
 local function edge(parent)
     local frame = edges[parent]
     if frame then return frame end
@@ -119,28 +112,21 @@ local function edge(parent)
         line.horizontal = i <= 2
         frame.lines[i] = line
     end
-    frame.anim = frame:CreateAnimationGroup()
-    frame.alpha = frame.anim:CreateAnimation("Alpha")
-    frame.alpha:SetSmoothing("IN_OUT")
-    frame:SetScript("OnShow", function(f) if f.animated then f.anim:Play() end end)
-    frame:SetScript("OnHide", function(f) f.anim:Stop() end)
     edges[parent] = frame
     return frame
 end
 
---- @param animation table|nil { from, to, duration, looping }
-local function styleEdge(frame, item, key, color, thickness, animation)
+local function styleEdge(frame, item, key, color, thickness, level)
     local icon = item.Icon or item
     local inset = Skin.db.profile[key].borderSize
-    local level = (frame.levelAnchor or frame:GetParent()):GetFrameLevel() + 1
-    local previous = frame.edgeStyle
     local alpha = color.a or 1
+    local previous = frame.edgeStyle
     if not previous or previous.icon ~= icon or previous.inset ~= inset then
         frame:ClearAllPoints()
         frame:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, -inset)
         frame:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, inset)
     end
-    if not previous or previous.level ~= level then frame:SetFrameLevel(level) end
+    if frame:GetFrameLevel() ~= level then frame:SetFrameLevel(level) end
     if not previous or previous.r ~= color.r or previous.g ~= color.g or previous.b ~= color.b
         or previous.a ~= alpha or previous.thickness ~= thickness then
         for _, line in ipairs(frame.lines) do
@@ -148,60 +134,63 @@ local function styleEdge(frame, item, key, color, thickness, animation)
             if line.horizontal then line:SetHeight(thickness) else line:SetWidth(thickness) end
         end
     end
-    local from = animation and animation.from
-    local to = animation and animation.to
-    local duration = animation and animation.duration
-    local looping = animation and (animation.looping or "NONE")
-    -- Geometry/color refreshes must not reset the phase of an active alpha animation.
-    if not previous or previous.from ~= from or previous.to ~= to
-        or previous.duration ~= duration or previous.looping ~= looping then
-        if frame.animated then frame.anim:Stop() end
-        frame.animated = animation ~= nil
-        if animation then
-            frame.anim:SetLooping(looping)
-            frame.alpha:SetFromAlpha(from)
-            frame.alpha:SetToAlpha(to)
-            frame.alpha:SetDuration(duration)
-            if frame:IsVisible() then frame.anim:Play() end
-        end
+    frame.edgeStyle = { icon = icon, inset = inset, r = color.r, g = color.g, b = color.b, a = alpha, thickness = thickness }
+end
+
+--- Bounces between two alphas on the shared clock: showing again (or Blizzard re-acquiring its pooled frame)
+--- continues the pulse instead of restarting it. OnUpdate only runs while the edge is visible.
+local function updatePulse(frame, elapsed)
+    frame.pulseElapsed = frame.pulseElapsed + elapsed
+    if frame.pulseElapsed < UPDATE_INTERVAL then return end
+    frame.pulseElapsed = 0
+    local pulse = frame.pulse
+    local progress = (GetTime() % (2 * pulse.duration)) / pulse.duration
+    if progress > 1 then progress = 2 - progress end
+    progress = progress * progress * (3 - 2 * progress)
+    frame:SetAlpha(pulse.from + (pulse.to - pulse.from) * progress)
+end
+
+local function setPulse(frame, from, to, duration)
+    if from then
+        frame.pulse = { from = from, to = to, duration = duration }
+        frame.pulseElapsed = UPDATE_INTERVAL
+        frame:SetScript("OnUpdate", updatePulse)
+        updatePulse(frame, 0)
+    else
+        frame.pulse = nil
+        frame:SetScript("OnUpdate", nil)
+        frame:SetAlpha(1)
     end
-    frame.edgeStyle = {
-        icon = icon, inset = inset, level = level, r = color.r, g = color.g, b = color.b,
-        a = alpha, thickness = thickness, from = from, to = to, duration = duration, looping = looping,
-    }
 end
 
 -- Pandemic -------------------------------------------------------------------------------------
 
---- Blizzard re-checks pandemic state every frame; restyle only a newly acquired frame or after a settings change.
+local raiseReady -- Defined with the ready flash, which draws above the pandemic glow.
+
+--- Blizzard calls ShowPandemicStateFrame every frame during pandemic time; only a pooled frame newly acquired for
+--- this item, a level change by Skin, or a settings change restyles it.
 local function stylePandemic(item)
     local frame = item.PandemicIcon
     if not frame then return end
+    local level = frame:GetFrameLevel()
     local done = pandemicStyled[frame]
-    if done and done.item == item and done.revision == revision then return end
-    pandemicStyled[frame] = { item = item, revision = revision }
+    if done and done.item == item and done.revision == revision and done.level == level then return end
+    pandemicStyled[frame] = { item = item, revision = revision, level = level }
     local s, key = settings(item, "pandemic")
     local custom = s and s.custom
+    traceEvent(item, "pandemic", "style", custom and "custom" or "native")
     if custom then
         local square = edge(frame)
-        traceEdge(square, item, "pandemic")
-        styleEdge(square, item, key, s.color, s.thickness,
-            s.pulse and { from = 1, to = 0.35, duration = s.speed, looping = "BOUNCE" } or nil)
+        styleEdge(square, item, key, s.color, s.thickness, level + 1)
+        setPulse(square, s.pulse and 1, 0.35, s.speed)
         square:Show()
     elseif edges[frame] then
+        setPulse(edges[frame])
         edges[frame]:Hide()
     end
-    if frame.Border then
-        frame.Border:SetAlpha(1)
-        frame.Border:SetShown(not custom)
-    end
-    if frame.FX then
-        frame.FX:SetAlpha(1)
-        frame.FX:SetShown(not custom)
-        for _, anim in ipairs({ frame.FX:GetAnimationGroups() }) do
-            if custom then anim:Stop() else anim:Play() end
-        end
-    end
+    if frame.Border then frame.Border:SetShown(not custom) end
+    if frame.FX then frame.FX:SetShown(not custom) end
+    raiseReady(item)
 end
 
 -- Visual alerts ------------------------------------------------------------------------------
@@ -217,50 +206,63 @@ local function alertColor(alert, s)
     return s.color
 end
 
+local function restoreAlert(alert)
+    alertItems[alert] = nil
+    if dashes[alert] then Glow.StopDashes(dashes[alert]) end
+    if edges[alert] then
+        setPulse(edges[alert])
+        edges[alert]:Hide()
+    end
+    local native = alert.Flipbook or alert.Glow
+    if native then native:Show() end
+end
+
 local function styleAlert(item, alert)
     local s, key = settings(item, "alerts")
-    local custom = s and s.custom
+    if not s or not s.custom then
+        if alertItems[alert] then restoreAlert(alert) end
+        return
+    end
+    alertItems[alert] = item
     local native = alert.Flipbook or alert.Glow
-    local ants = alert.Flipbook ~= nil
-    local drawn = false
-    if custom and ants then
+    local level = alert:GetFrameLevel() + 1
+    local drawn
+    if alert.Flipbook then
         local frame = dashes[alert]
         if not frame then
-            frame = Glow.CreateDashes(alert, item.Icon or item, alert:GetFrameLevel() + 1)
+            frame = Glow.CreateDashes(alert, item.Icon or item, level)
             dashes[alert] = frame
         end
         frame:ClearAllPoints()
         frame:SetAllPoints(item.Icon or item)
-        frame:SetFrameLevel(alert:GetFrameLevel() + 1)
+        frame:SetFrameLevel(level)
         local size = iconSizes[item]
         if size then frame.readableWidth, frame.readableHeight = size[1], size[2] end
         drawn = Glow.StartDashes(frame, s, key, alertColor(alert, s))
-    elseif dashes[alert] then
-        Glow.StopDashes(dashes[alert])
-    end
-    if custom and not ants then
+    else
         local square = edge(alert)
-        styleEdge(square, item, key, alertColor(alert, s), s.thickness,
-            { from = 0.25, to = 1, duration = 0.5, looping = "BOUNCE" })
+        styleEdge(square, item, key, alertColor(alert, s), s.thickness, level)
+        if not square.pulse then setPulse(square, 0.25, 1, 0.5) end
         square:Show()
         drawn = true
-    elseif edges[alert] then
-        edges[alert]:Hide()
     end
-    -- Keep Blizzard's art when our dashes have no readable geometry yet.
+    -- Keep Blizzard's art while our dashes have no readable geometry yet.
     if native then native:SetShown(not drawn) end
 end
 
+--- AddAlert and RemoveAlert both re-sort through UpdateAlerts; a removed alert is no longer in the container.
 local function styleAlerts(item)
-    for _, alert in ipairs(item.alertContainer or {}) do styleAlert(item, alert) end
+    local current = {}
+    for _, alert in ipairs(item.alertContainer or {}) do
+        current[alert] = true
+        styleAlert(item, alert)
+    end
+    for alert, owner in pairs(alertItems) do
+        if owner == item and not current[alert] then restoreAlert(alert) end
+    end
 end
 
 -- Ready flash --------------------------------------------------------------------------------
-
--- The custom edge reads the cooldown itself instead of Blizzard's flash timeline: Blizzard restarts that timeline
--- on every cooldown refresh (GCD, procs) and hides it while the spell reports the GCD.
-local readyCurves = {} -- brighten duration -> curve of seconds remaining -> alpha
-local readyDurations = setmetatable({}, { __mode = "k" }) -- item -> duration object of the tracked cooldown
 
 local function readyCurve(duration)
     local curve = readyCurves[duration]
@@ -278,59 +280,110 @@ local function readyCurve(duration)
     return curve
 end
 
---- Duration object for the cooldown Blizzard flashes on; values may be secret, so it is only evaluated by the engine.
-local function readyCooldown(item)
-    local spellID = item.GetSpellID and item:GetSpellID()
-    if not issecretvalue(spellID) and not spellID then return end
-    if not C_Spell or not C_Spell.GetSpellCooldownDuration then return end
-    local charges = item.HasVisualDataSource_Charges and item:HasVisualDataSource_Charges()
-    if not issecretvalue(charges) and charges and C_Spell.GetSpellChargeDuration then
-        return C_Spell.GetSpellChargeDuration(spellID)
-    end
-    return C_Spell.GetSpellCooldownDuration(spellID, true)
+local function active(duration)
+    if not duration then return false end
+    local zero = duration:IsZero()
+    return issecretvalue(zero) or not zero
 end
+
+--- Equipped items (trinkets) cool down as items, like Blizzard displays them: their on-use spell only carries the
+--- short lockout shared by on-use items.
+--- @return table|nil duration, boolean busy, boolean handled
+local function itemCooldown(item)
+    local slot = item.GetEquipSlot and item:GetEquipSlot()
+    if not slot or issecretvalue(slot) then return nil, false, false end
+    local start, length, enable, gcd = GetInventoryItemCooldown("player", slot)
+    if issecretvalue(start) or issecretvalue(length) or issecretvalue(enable) or issecretvalue(gcd) then
+        return nil, true, true -- Unreadable: keep whatever is tracked rather than guess.
+    end
+    if not start or not length or length <= 0 or start + length <= GetTime() or (enable ~= 1 and enable ~= true) then
+        return nil, false, true
+    end
+    if gcd then return nil, true, true end
+    local duration = C_DurationUtil.CreateDuration()
+    duration:SetTimeFromStart(start, length)
+    return duration, true, true
+end
+
+--- The real cooldown (ignoring the GCD) as a duration object, which only the engine evaluates since its values may
+--- be secret; and whether the spell is still busy (cooldown or GCD), in which case a tracked pulse is kept: the API
+--- reports no cooldown at all while the GCD outlasts the remaining one.
+local function readyCooldown(item)
+    local duration, busy, handled = itemCooldown(item)
+    if handled then return duration, busy end
+    local spellID = item.GetSpellID and item:GetSpellID()
+    if not issecretvalue(spellID) and not spellID then return nil, false end
+    local charges = item.HasVisualDataSource_Charges and item:HasVisualDataSource_Charges()
+    if issecretvalue(charges) or not charges then
+        duration = C_Spell.GetSpellCooldownDuration(spellID, true)
+    else
+        duration = C_Spell.GetSpellChargeDuration(spellID)
+    end
+    if active(duration) then return duration, true end
+    return nil, active(C_Spell.GetSpellCooldownDuration(spellID, false))
+end
+
+local function readyLevel(item)
+    local level = item:GetFrameLevel()
+    if item.CooldownFlash then level = math.max(level, item.CooldownFlash:GetFrameLevel()) end
+    -- The pandemic edge sits one level above Blizzard's pandemic frame.
+    if item.PandemicIcon then level = math.max(level, item.PandemicIcon:GetFrameLevel() + 1) end
+    return level + 1
+end
+
+function raiseReady(item)
+    local square = edges[item]
+    if square and square.readyEdge then
+        local level = readyLevel(item)
+        if square:GetFrameLevel() ~= level then square:SetFrameLevel(level) end
+    end
+end
+
+local stopReady
 
 local function updateReady(square, elapsed)
-    if elapsed then
-        square.readyElapsed = (square.readyElapsed or 0) + elapsed
-        if square.readyElapsed < 1 / 30 then return end
-        square.readyElapsed = 0
+    square.readyElapsed = square.readyElapsed + elapsed
+    if square.readyElapsed < UPDATE_INTERVAL then return end
+    square.readyElapsed = 0
+    local duration = readyDurations[square.item]
+    if not duration then return end
+    if not duration:HasSecretValues() and duration:HasExpired() then
+        stopReady(square.item)
+        return
     end
-    local duration, curve = readyDurations[square.item], square.curve
-    if duration and curve then square:SetAlpha(duration:EvaluateRemainingDuration(curve)) end
+    square:SetAlpha(duration:EvaluateRemainingDuration(square.curve))
 end
 
-local function stopReady(item)
-    readyDurations[item] = nil
+function stopReady(item)
     local square = edges[item]
+    if readyDurations[item] then traceEvent(item, "ready", "stop") end
+    readyDurations[item] = nil
     if square and square.readyEdge then
         square:SetScript("OnUpdate", nil)
         square:Hide()
     end
 end
 
---- Track the latest cooldown while Blizzard has a flash pending; refreshes keep the pulse phase intact.
-local function trackReady(item, started)
+--- Runs whenever Blizzard refreshes the item's cooldown (casts, GCD start/end, procs, aura changes).
+local function refreshReady(item)
     local s = settings(item, "flash")
     local square = edges[item]
     if not s or not s.custom or not square or not square.readyEdge then return end
-    if not started and not readyDurations[item] then return end
-    local duration = readyCooldown(item)
-    if not duration then
-        stopReady(item)
-        return
+    local duration, busy = readyCooldown(item)
+    if duration then
+        if not readyDurations[item] then traceEvent(item, "ready", "track") end
+        readyDurations[item] = duration:Copy()
+        square.curve = readyCurve(s.duration)
+        raiseReady(item)
+        square.readyElapsed = UPDATE_INTERVAL
+        updateReady(square, 0)
+        if readyDurations[item] then
+            square:SetScript("OnUpdate", updateReady)
+            square:Show()
+        end
+    elseif readyDurations[item] then
+        if busy then traceEvent(item, "ready", "keep") else stopReady(item) end
     end
-    local zero = duration:IsZero()
-    if not issecretvalue(zero) and zero then
-        stopReady(item)
-        return
-    end
-    if not readyDurations[item] then traceEvent(item, "ready", "pulse-track") end
-    readyDurations[item] = duration
-    square.curve = readyCurve(s.duration)
-    updateReady(square)
-    square:SetScript("OnUpdate", updateReady)
-    square:Show()
 end
 
 local function styleFlash(item)
@@ -338,23 +391,20 @@ local function styleFlash(item)
     if not flash or not flash.Flipbook then return end
     local s, key = settings(item, "flash")
     local custom = s and s.custom
-    local square = edges[item]
     if custom then
-        square = edge(item)
+        local square = edge(item)
         square.item = item
-        square.levelAnchor = flash
-        traceEdge(square, item, "ready")
-        styleEdge(square, item, key, s.color, s.thickness)
-        if not square.readyEdge then
-            square.readyEdge = true
-            square:Hide()
-        end
-        if readyDurations[item] then square.curve = readyCurve(s.duration) end
-    elseif square then
+        square.readyEdge = true
+        square.readyElapsed = 0
+        styleEdge(square, item, key, s.color, s.thickness, readyLevel(item))
+        if not readyDurations[item] then square:Hide() end
+        refreshReady(item)
+    elseif edges[item] then
         stopReady(item)
     end
     flash.Flipbook:SetShown(not custom)
 end
+
 -- Debuff border ------------------------------------------------------------------------------
 
 local function dispelColor(auraData)
@@ -368,19 +418,22 @@ local function dispelColor(auraData)
     return { r = 0.8, g = 0, b = 0, a = 1 }
 end
 
-local function styleDebuff(item)
+--- Blizzard shows the border frame while an aura is displayed and its texture only for harmful auras.
+local function styleDebuff(item, auraData)
     local border = item.DebuffBorder
-    if not border or not border.Texture then return end
+    local texture = border and border.Texture
+    if not texture then return end
     local s, key = settings(item, "debuff")
     local custom = s and s.custom
-    border.Texture:SetAlpha(custom and 0 or 1)
+    texture:SetAlpha(custom and 0 or 1)
+    local square = edges[border]
     if custom then
-        local square = edge(border)
-        styleEdge(square, item, key, debuffColors[item] or dispelColor(nil), s.thickness)
-        local shown = border.Texture:IsShown()
-        square:SetShown(issecretvalue(shown) or shown)
-    elseif edges[border] then
-        edges[border]:Hide()
+        square = edge(border)
+        if auraData then square.color = dispelColor(auraData) end
+        styleEdge(square, item, key, square.color or dispelColor(nil), s.thickness, border:GetFrameLevel() + 1)
+        square:SetShown(texture:IsShown())
+    elseif square then
+        square:Hide()
     end
 end
 
@@ -390,41 +443,29 @@ local function hook(item)
     if hooked[item] then return end
     hooked[item] = true
     if item.ShowPandemicStateFrame then hooksecurefunc(item, "ShowPandemicStateFrame", stylePandemic) end
-    if item.HidePandemicStateFrame then
-        hooksecurefunc(item, "HidePandemicStateFrame", function()
-            for frame, styled in pairs(pandemicStyled) do
-                if styled.item == item then pandemicStyled[frame] = nil end
-            end
-        end)
-    end
-    -- AddAlert/RemoveAlert re-sort through UpdateAlerts after the alert is anchored and before it shows.
     if item.UpdateAlerts then hooksecurefunc(item, "UpdateAlerts", styleAlerts) end
-    local flash = item.CooldownFlash
-    if flash and flash.FlashAnim then
-        hooksecurefunc(flash.FlashAnim, "Play", function()
-            traceEvent(item, "ready", "native-play")
-            trackReady(item, true)
-        end)
-        -- Blizzard also stops the flash when the spell reports the GCD or its cooldown resets: re-read the cooldown.
-        hooksecurefunc(flash.FlashAnim, "Stop", function()
-            traceEvent(item, "ready", "native-stop")
-            trackReady(item, false)
-        end)
+    if item.CooldownFlash then
+        if item.RefreshSpellCooldownInfo then
+            hooksecurefunc(item, "RefreshSpellCooldownInfo", refreshReady)
+        elseif item.CooldownFlash.FlashAnim then
+            hooksecurefunc(item.CooldownFlash.FlashAnim, "Stop", function() refreshReady(item) end)
+        end
         local cooldown = item.GetCooldownFrame and item:GetCooldownFrame() or item.Cooldown
-        if cooldown then cooldown:HookScript("OnCooldownDone", function() stopReady(item) end) end
-        item:HookScript("OnHide", function() stopReady(item) end)
-        flash.FlashAnim:HookScript("OnFinished", function()
-            traceEvent(item, "ready", "native-finished")
-            stopReady(item)
-        end)
-        flash:HookScript("OnShow", function() traceEvent(item, "ready", "parent-show") end)
-        flash:HookScript("OnHide", function() traceEvent(item, "ready", "parent-hide") end)
+        if cooldown then cooldown:HookScript("OnCooldownDone", function() refreshReady(item) end) end
     end
-    if item.DebuffBorder and item.DebuffBorder.UpdateFromAuraData then
-        hooksecurefunc(item.DebuffBorder, "UpdateFromAuraData", function(_, auraData)
-            if auraData then debuffColors[item] = dispelColor(auraData) end
-            styleDebuff(item)
-        end)
+    local border = item.DebuffBorder
+    if border and border.Texture then
+        if border.UpdateFromAuraData then
+            hooksecurefunc(border, "UpdateFromAuraData", function(_, auraData) styleDebuff(item, auraData) end)
+        end
+        local function mirror()
+            local square = edges[border]
+            local s = settings(item, "debuff")
+            if square and s and s.custom then square:SetShown(border.Texture:IsShown()) end
+        end
+        hooksecurefunc(border.Texture, "Show", mirror)
+        hooksecurefunc(border.Texture, "Hide", mirror)
+        hooksecurefunc(border.Texture, "SetShown", mirror)
     end
 end
 
@@ -457,7 +498,6 @@ end
 function NativeGlows:OnProfileRefresh()
     self:Refresh()
 end
-
 -- Options ------------------------------------------------------------------------------------
 
 function NativeGlows:GetViewerOptions(key)
@@ -543,7 +583,6 @@ function NativeGlows:OnInitialize()
 end
 
 function NativeGlows:OnEnable()
-    self:RegisterEvent("SPELL_UPDATE_COOLDOWN", function() traceEvent(self, "cooldowns", "update") end)
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "OnViewerMessage")
     self:RegisterMessage(Viewers.MESSAGES.LAYOUT_UPDATED, "OnViewerMessage")
     self:RegisterMessage(Viewers.MESSAGES.SHOWN, "OnViewerMessage")
