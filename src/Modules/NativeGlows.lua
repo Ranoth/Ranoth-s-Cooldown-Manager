@@ -37,7 +37,6 @@ local pandemicStyled = weak() -- pandemic frame -> { item, revision, level }
 local alertItems = weak() -- alert -> item it is styled for
 local iconSizes = weak() -- item -> { width, height } read out of combat
 local readyDurations = weak() -- item -> duration object of the tracked cooldown
-local readyCurves = {} -- brighten duration -> curve of seconds remaining -> alpha
 local revision = 0
 
 -- Tracing ------------------------------------------------------------------------------------
@@ -264,20 +263,88 @@ end
 
 -- Ready flash --------------------------------------------------------------------------------
 
-local function readyCurve(duration)
-    local curve = readyCurves[duration]
-    if curve then return curve end
-    curve = C_CurveUtil.CreateCurve()
+local READY_PIECES_PER_EDGE = 16
+local READY_LINE_LENGTH = 1 / 8 -- Fraction of the perimeter occupied by each moving line.
+
+local function readyCurve(duration, midpoint)
+    local curve = C_CurveUtil.CreateCurve()
     curve:SetType(Enum.LuaCurveType.Linear)
-    -- Invisible once ready, brightest just before, easing in over the configured duration.
+    -- Gate fixed pieces instead of calculating positions from potentially secret remaining time.
+    -- Each piece is paired with the one half a perimeter away; each line travels half the perimeter.
+    local epsilon = 0.00001
     curve:AddPoint(0, 0)
-    for step = 4, 0, -1 do
-        local progress = step / 4
-        curve:AddPoint(math.max(duration * (1 - progress), 0.01), progress * progress)
+    for lap = 1, 0, -1 do
+        local first = math.max(0, (1 - 2 * midpoint - lap) * duration)
+        local last = math.min(duration, (1 - 2 * midpoint + 2 * READY_LINE_LENGTH - lap) * duration)
+        if last > first then
+            if first > 0 then curve:AddPoint(first, 0) end
+            curve:AddPoint(first + epsilon, 1)
+            curve:AddPoint(last, 1)
+            curve:AddPoint(last + epsilon, 0)
+        end
     end
     curve:AddPoint(86400, 0)
-    readyCurves[duration] = curve
     return curve
+end
+
+local function styleReady(item, s, key)
+    local size = iconSizes[item]
+    if not size then return false end
+    local inset = Skin.db.profile[key].borderSize
+    local width, height = size[1] - 2 * inset, size[2] - 2 * inset
+    if width <= 0 or height <= 0 then return false end
+    local thickness = math.min(s.thickness, width, height)
+    local pathWidth, pathHeight = width - thickness, height - thickness
+    local perimeter = 2 * (pathWidth + pathHeight)
+    if pathWidth <= 0 or pathHeight <= 0 then return false end
+    local square = edges[item]
+    if not square then
+        square = CreateFrame("Frame", nil, item)
+        square:EnableMouse(false)
+        square.item, square.readyEdge = item, true
+        square.readyElapsed = 0
+        square.lines, square.pieces = {}, {}
+        for i = 1, 2 * READY_PIECES_PER_EDGE do
+            local piece = {}
+            for side = 1, 2 do
+                local line = square:CreateTexture(nil, "OVERLAY")
+                line:SetTexture(WHITE)
+                piece[side] = line
+                square.lines[#square.lines + 1] = line
+            end
+            square.pieces[i] = piece
+        end
+        square:Hide()
+        edges[item] = square
+    end
+    square:ClearAllPoints()
+    square:SetAllPoints(item.Icon or item)
+    square:SetAlpha(1)
+    local previous = square.readyStyle
+    local changed = not previous or previous.width ~= width or previous.height ~= height
+        or previous.thickness ~= thickness or previous.duration ~= s.duration
+    for i, piece in ipairs(square.pieces) do
+        local horizontal = i <= READY_PIECES_PER_EDGE
+        local index = (i - 1) % READY_PIECES_PER_EDGE
+        local length = (horizontal and pathWidth or pathHeight) / READY_PIECES_PER_EDGE
+        local midpoint = (index + 0.5) * length
+        if changed then
+            piece.curve = readyCurve(s.duration, (horizontal and midpoint or pathWidth + midpoint) / perimeter)
+        end
+        for side, line in ipairs(piece) do
+            local x = horizontal and midpoint or pathWidth
+            local y = horizontal and 0 or midpoint
+            if side == 2 then x, y = pathWidth - x, pathHeight - y end
+            line:ClearAllPoints()
+            line:SetPoint("CENTER", square, "TOPLEFT", inset + thickness / 2 + x, -inset - thickness / 2 - y)
+            line:SetSize(horizontal and length + thickness or thickness,
+                horizontal and thickness or length + thickness)
+            line:SetVertexColor(s.color.r, s.color.g, s.color.b, s.color.a)
+        end
+    end
+    square.readyStyle = { width = width, height = height, thickness = thickness, duration = s.duration }
+    raiseReady(item)
+    return true
 end
 
 local function active(duration)
@@ -351,7 +418,11 @@ local function updateReady(square, elapsed)
         stopReady(square.item)
         return
     end
-    square:SetAlpha(duration:EvaluateRemainingDuration(square.curve))
+    for _, piece in ipairs(square.pieces) do
+        local alpha = duration:EvaluateRemainingDuration(piece.curve)
+        piece[1]:SetAlpha(alpha)
+        piece[2]:SetAlpha(alpha)
+    end
 end
 
 function stopReady(item)
@@ -368,12 +439,11 @@ end
 local function refreshReady(item)
     local s = settings(item, "flash")
     local square = edges[item]
-    if not s or not s.custom or not square or not square.readyEdge then return end
+    if not s or not s.custom or not square or not square.readyAvailable then return end
     local duration, busy = readyCooldown(item)
     if duration then
         if not readyDurations[item] then traceEvent(item, "ready", "track") end
         readyDurations[item] = duration:Copy()
-        square.curve = readyCurve(s.duration)
         raiseReady(item)
         square.readyElapsed = UPDATE_INTERVAL
         updateReady(square, 0)
@@ -390,13 +460,10 @@ local function styleFlash(item)
     local flash = item.CooldownFlash
     if not flash or not flash.Flipbook then return end
     local s, key = settings(item, "flash")
-    local custom = s and s.custom
+    local custom = s and s.custom and styleReady(item, s, key)
+    if edges[item] then edges[item].readyAvailable = custom end
     if custom then
-        local square = edge(item)
-        square.item = item
-        square.readyEdge = true
-        square.readyElapsed = 0
-        styleEdge(square, item, key, s.color, s.thickness, readyLevel(item))
+        local square = edges[item]
         if not readyDurations[item] then square:Hide() end
         refreshReady(item)
     elseif edges[item] then
@@ -568,10 +635,10 @@ function NativeGlows:GetViewerOptions(key)
             type = "group", inline = true, order = 4, name = "Ready flash",
             args = {
                 custom = toggle("flash", 1, "Custom ready flash",
-                    "Replace Blizzard's end-of-cooldown flash with a square edge that brightens toward the end, then disappears."),
+                    "Two lines start at opposite corners and each travel clockwise halfway around the icon before the cooldown ends."),
                 color = color("flash", 2, "Color"),
                 thickness = range("flash", "thickness", 3, "Thickness", 1, 5, 1),
-                duration = range("flash", "duration", 4, "Brighten duration", 0.2, 2, 0.05),
+                duration = range("flash", "duration", 4, "Animation duration", 0.2, 2, 0.05),
             },
         }
     end
