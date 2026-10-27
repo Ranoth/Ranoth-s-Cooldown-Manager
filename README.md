@@ -114,6 +114,9 @@ skin. Existing profiles keep sharing enabled if either old toggle was on.
 Touching bordered elements
 share a single centered seam without changing their positions or sizes.
 This covers icon-to-icon, bar-to-bar and bar-to-viewer icon contacts.
+Cast bars and buff viewers (including custom trackers in Buff icons) are
+excluded: they keep ordinary borders and full glow insets. Their visibility
+and geometry can depend on restricted combat data.
 Different border sizes use the thicker size; the upper/left element supplies
 the seam color and opacity. Gaps retain separate borders. Where a bar meets a
 narrower bar or viewer, the centered seam continues across the exposed overhang
@@ -123,12 +126,17 @@ bounds is supported as well.
 
 Custom proc, ready-flash, pandemic and debuff effects use half the configured
 border inset while sharing is enabled, matching the inward half
-of a centered seam. Turning sharing off restores their full border inset.
+of a centered seam for participating viewers. Turning sharing off restores
+their full border inset.
 
 Only RCM-drawn borders are affected, not Blizzard frame artwork, glows, or
 internal class-resource dividers. Geometry is checked on layout/visibility/style
 changes, not every frame. Unchanged geometry skips rendering, and any extra
 edge textures needed for partial contacts are pooled and reused.
+Shared-border calculations never run during combat; requests are deferred
+and geometry is refreshed after combat ends. Existing shared geometry remains
+in place meanwhile. Unreadable secret geometry is excluded from that refresh,
+leaving ordinary borders until readable geometry becomes available.
 Shared edges use a common border layer within each frame strata so neighboring
 icon artwork and bar fills cannot cover a seam. Border geometry is aligned to
 physical display pixels before splitting edges, with thickness rounded to the

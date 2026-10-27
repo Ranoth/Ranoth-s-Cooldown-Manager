@@ -48,9 +48,9 @@ local nativeEffects = setmetatable({}, { __mode = "k" })
 
 function Skin:GetGlowInset(key)
     local size = self.db.profile[key].borderSize
-    local sharing = RanothsCooldownManager:GetModule("Borders").db.profile
+    local borders = RanothsCooldownManager:GetModule("Borders")
     -- Shared seams are centered on the icon boundary rather than fully inset.
-    return sharing.enabled and size / 2 or size
+    return borders.db.profile.enabled and not borders:IsExcluded(key) and size / 2 or size
 end
 
 --- Fit native ready/proc/pandemic/alert artwork to the area inside our border without replacing its animation.
@@ -178,11 +178,11 @@ local function createBorder(item, icon)
     return border
 end
 
-local function applyBorder(item, st, icon, s)
+local function applyBorder(item, st, icon, s, key)
     local Borders = RanothsCooldownManager:GetModule("Borders")
     if s.borderSize <= 0 then
         if st.border then st.border:Hide() end
-        if st.border then Borders:Register(item, st.border, icon, 0, s.borderColor, "icons") end
+        if st.border then Borders:Register(item, st.border, icon, 0, s.borderColor, "icons", key) end
         return
     end
     st.border = st.border or createBorder(item, icon)
@@ -196,7 +196,7 @@ local function applyBorder(item, st, icon, s)
         edge:SetVertexColor(c.r, c.g, c.b, c.a)
     end
     st.border:Show()
-    Borders:Register(item, st.border, icon, size, c, "icons")
+    Borders:Register(item, st.border, icon, size, c, "icons", key)
 end
 
 local function countdownFontString(item)
@@ -225,7 +225,7 @@ local function applyCountdownOutline(text, st, s)
     end
 end
 
-local function applyItem(item, s, countdown, native)
+local function applyItem(item, s, countdown, native, key)
     local st = state[item]
     if not st and isNeutral(s) and not native then return end
 
@@ -275,7 +275,7 @@ local function applyItem(item, s, countdown, native)
     end
     if st.overlay then st.overlay:SetAlpha(s.square and 0 or 1) end
 
-    applyBorder(item, st, icon, s)
+    applyBorder(item, st, icon, s, key)
 
     local text = countFontString(item)
     if text then
@@ -476,7 +476,7 @@ function Skin:Apply(key, incremental)
             if item.trackerID and previous and previous.key ~= key and state[item] then
                 state[item].cdFont = nil
             end
-            applyItem(item, s, countdown, item.trackerID and native or nil)
+            applyItem(item, s, countdown, item.trackerID and native or nil, key)
             applied[item] = {
                 key = key, revision = revision, cooldownID = item.cooldownID, icon = item.Icon,
                 cooldown = item.Cooldown, text = text, countdown = countdown,

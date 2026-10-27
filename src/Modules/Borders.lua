@@ -19,8 +19,16 @@ end
 
 function Borders:Request()
     if not self.db then return end
+    if InCombatLockdown() then
+        dirty = true
+        return
+    end
     if not self.db.profile.enabled and #active == 0 then return end
     Safe:Notify(REQUESTED, "all")
+end
+
+function Borders:IsExcluded(key)
+    return key == "CastBar" or key == "BuffIcon" or key == "BuffBar"
 end
 
 function Borders:Register(frame, border, anchor, size, color, kind, key)
@@ -227,6 +235,11 @@ local function render()
 end
 
 function Borders:Refresh()
+    -- A queued message may run after combat starts, even if its request was safe.
+    if InCombatLockdown() then
+        dirty = true
+        return
+    end
     local changed = dirty
     local _, screenHeight = GetPhysicalScreenSize()
     -- GetEffectiveScale gives global UI coordinates, not physical display pixels.
@@ -235,7 +248,7 @@ function Borders:Refresh()
     dirty = false
     wipe(active)
     for _, entry in pairs(entries) do
-        local enabled = self.db.profile.enabled
+        local enabled = self.db.profile.enabled and not self:IsExcluded(entry.key)
         if enabled and entry.kind == "bars" then
             local layout, bars, resources = Addon:GetModule("Layout"), Addon:GetModule("Bars"), Addon:GetModule("Resources")
             local settings = layout.db.profile.stack[entry.key]
@@ -243,21 +256,25 @@ function Borders:Refresh()
             enabled = settings and settings.enabled and selected == entry.frame
         end
         local visible = enabled and entry.size > 0 and entry.frame:IsVisible() and entry.border:IsShown()
-        local left, bottom, width, height, scale
+        local left, bottom, width, height, scale, borderScale
         if visible then
             local strata = entry.border:GetFrameStrata()
             local level = entry.frame:GetFrameLevel() + entry.levelOffset
             if entry.strata ~= strata or entry.level ~= level then changed = true end
             entry.strata, entry.level = strata, level
             scale = entry.anchor:GetEffectiveScale()
+            borderScale = entry.border:GetEffectiveScale()
             left, bottom = entry.anchor:GetLeft(), entry.anchor:GetBottom()
             width, height = entry.anchor:GetWidth(), entry.anchor:GetHeight()
-            visible = left ~= nil and bottom ~= nil and width > 0 and height > 0 and scale > 0
+            visible = not issecretvalue(left) and not issecretvalue(bottom)
+                and not issecretvalue(width) and not issecretvalue(height)
+                and not issecretvalue(scale) and not issecretvalue(borderScale)
+                and left ~= nil and bottom ~= nil and width > 0 and height > 0 and scale > 0 and borderScale > 0
         end
         if visible then
             local right, top = (left + width) * scale, (bottom + height) * scale
             left, bottom = left * scale, bottom * scale
-            local thickness = math.min(entry.size * entry.border:GetEffectiveScale(), (right - left) / 2, (top - bottom) / 2)
+            local thickness = math.min(entry.size * borderScale, (right - left) / 2, (top - bottom) / 2)
             if entry.left ~= left or entry.bottom ~= bottom or entry.right ~= right
                 or entry.top ~= top or entry.thickness ~= thickness then changed = true end
             entry.left, entry.bottom, entry.right, entry.top, entry.thickness = left, bottom, right, top, thickness
@@ -301,6 +318,7 @@ function Borders:OnInitialize()
 end
 
 function Borders:OnEnable()
+    self:RegisterEvent("PLAYER_REGEN_ENABLED", "Request")
     self:RegisterEvent("DISPLAY_SIZE_CHANGED", "OnProfileRefresh")
     self:RegisterEvent("UI_SCALE_CHANGED", "OnProfileRefresh")
     self:RegisterMessage(REQUESTED, "Refresh")
