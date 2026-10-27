@@ -1,0 +1,20 @@
+## Interface: 120105
+## Title: |cffc66ff0Ranoth's Cooldown Manager|r - Options
+## Notes: Load-on-demand settings for Ranoth's Cooldown Manager.
+## Author: Ranoth_
+## Version: v0.0.0
+## LoadOnDemand: 1
+## Dependencies: Ranoth-s-Cooldown-Manager
+
+Embeds.xml
+Modules\Borders.lua
+Modules\Layout.lua
+Modules\BuffBars.lua
+Modules\IconLayout.lua
+Modules\Skin.lua
+Modules\NativeGlows.lua
+Modules\Glow.lua
+Modules\CustomTrackers.lua
+Modules\Bars.lua
+Modules\ResourceSkin.lua
+Options.lua

@@ -1,6 +1,6 @@
 ## Interface: 120105
 ## Title: |cffc66ff0Ranoth's Cooldown Manager|r
-## Notes: Describe Ranoth's Cooldown Manager!
+## Notes: Ranoth's very own Cooldown Manager extension!
 ## Author: Ranoth_
 ## Version: v0.0.0
 ## DefaultState: Enabled

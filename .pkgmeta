@@ -1,5 +1,8 @@
 package-as: Ranoth-s-Cooldown-Manager
 
+move-folders:
+  Ranoth-s-Cooldown-Manager/Ranoth-s-Cooldown-Manager_Options: Ranoth-s-Cooldown-Manager_Options
+
 externals:
   libs/LibStub: https://repos.wowace.com/wow/libstub/trunk
   libs/LibSharedMedia-3.0: https://repos.wowace.com/wow/libsharedmedia-3-0/trunk
@@ -10,9 +13,9 @@ externals:
   libs/AceHook-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceHook-3.0
   libs/AceDB-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceDB-3.0
   # libs/AceComm-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceComm-3.0
-  # AceConfig-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceConfig-3.0
-  # AceDBOptions-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceDBOptions-3.0
-  # libs/AceGUI-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceGUI-3.0
+  libs/AceConfig-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceConfig-3.0
+  libs/AceDBOptions-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceDBOptions-3.0
+  libs/AceGUI-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceGUI-3.0
   # libs/AceLocale-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceLocale-3.0
   # libs/AceSerializer-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceSerializer-3.0
   # libs/AceTimer-3.0: https://repos.curseforge.com/wow/ace3/trunk/AceTimer-3.0

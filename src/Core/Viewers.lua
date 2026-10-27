@@ -55,7 +55,7 @@ end
 --- Get the currently active item frames (icons or bars) of a viewer.
 --- @param key string One of Viewers.KEYS
 --- @return table items
-function Viewers:GetItems(key)
+function Viewers:GetNativeItems(key)
     local viewer = self:Get(key)
     local items = {}
     if not viewer then return items end
@@ -72,6 +72,15 @@ function Viewers:GetItems(key)
         if child.GetCooldownID or child.cooldownID then
             items[#items + 1] = child
         end
+    end
+    return items
+end
+
+function Viewers:GetItems(key)
+    local items = self:GetNativeItems(key)
+    local Trackers = RanothsCooldownManager:GetModule("CustomTrackers", true)
+    if Trackers and Trackers.db then
+        for _, item in ipairs(Trackers:GetItems(key)) do items[#items + 1] = item end
     end
     return items
 end
@@ -98,6 +107,11 @@ local function hookViewer(key, viewer)
     -- Edit Mode changes such as icon size only re-run Layout(), without RefreshLayout, but still resize the viewer.
     if viewer.Layout then
         Viewers:SecureHook(viewer, "Layout", function()
+            queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
+        end)
+    end
+    if viewer.SetTimerShown then
+        Viewers:SecureHook(viewer, "SetTimerShown", function()
             queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
         end)
     end

@@ -9,7 +9,6 @@ local RanothsCooldownManager = LibStub("AceAddon-3.0"):GetAddon(addon_name)
 local Skin = RanothsCooldownManager:NewModule("Skin", "AceEvent-3.0")
 
 local Viewers = RanothsCooldownManager:GetModule("Viewers")
-local Options = RanothsCooldownManager:GetModule("Options")
 local LSM = LibStub("LibSharedMedia-3.0")
 
 Skin.KEYS = { "Essential", "Utility", "BuffIcon" }
@@ -29,12 +28,12 @@ local function viewerDefaults()
         countFont = "", -- LibSharedMedia font name, "" = Blizzard's font
         textOutline = "", -- "" = Blizzard's, "NONE", "OUTLINE", "THICKOUTLINE"
         activeOpaque = false, -- icons whose aura is running ignore the viewer's opacity and show at 100%
-        itemCount = true, -- show remaining uses on healthstones
     }
 end
 
 local defaults = {
     profile = {
+        itemCount = true, -- show remaining uses on healthstones in any viewer
         Essential = viewerDefaults(),
         Utility = viewerDefaults(),
         BuffIcon = viewerDefaults(),
@@ -173,8 +172,10 @@ local function createBorder(item, icon)
 end
 
 local function applyBorder(item, st, icon, s)
+    local Borders = RanothsCooldownManager:GetModule("Borders")
     if s.borderSize <= 0 then
         if st.border then st.border:Hide() end
+        if st.border then Borders:Register(item, st.border, icon, 0, s.borderColor, "icons") end
         return
     end
     st.border = st.border or createBorder(item, icon)
@@ -188,6 +189,7 @@ local function applyBorder(item, st, icon, s)
         edge:SetVertexColor(c.r, c.g, c.b, c.a)
     end
     st.border:Show()
+    Borders:Register(item, st.border, icon, size, c, "icons")
 end
 
 local function countdownFontString(item)
@@ -216,9 +218,9 @@ local function applyCountdownOutline(text, st, s)
     end
 end
 
-local function applyItem(item, s, countdown)
+local function applyItem(item, s, countdown, native)
     local st = state[item]
-    if not st and isNeutral(s) then return end
+    if not st and isNeutral(s) and not native then return end
 
     local icon = item.Icon
     if type(icon) ~= "table" or not icon.SetTexCoord then return end
@@ -227,6 +229,22 @@ local function applyItem(item, s, countdown)
         st = { masked = true }
         st.mask, st.overlay = findRegions(item)
         state[item] = st
+    end
+
+    if native then
+        local original = state[native]
+        local nativeCountdown = countdownFontString(native)
+        if countdown and nativeCountdown then
+            local font = original and original.cdFont or { nativeCountdown:GetFont() }
+            countdown:SetFont(unpack(font))
+            st.cdFont = nil
+        end
+        local text, nativeText = countFontString(item), countFontString(native)
+        if text and nativeText then
+            local font = original and original.font or { nativeText:GetFont() }
+            text:SetFont(unpack(font))
+            st.font = nil
+        end
     end
 
     -- Spell icons carry a rounded, light edge in their own artwork, so square needs a minimum crop to hide it.
@@ -316,8 +334,11 @@ updateActiveAlpha = function(key)
             alphaApplied[key] = nil
             rawSetAlpha(viewer, baseAlpha[key] or 1)
             for _, item in ipairs(items) do
-                if itemAlpha[item] then rawSetAlpha(item, 1) end
-                itemAlpha[item] = nil
+                if alphaItemKeys[item] == key then
+                    if itemAlpha[item] then rawSetAlpha(item, 1) end
+                    itemAlpha[item] = nil
+                    alphaItemKeys[item] = nil
+                end
             end
         end
         return
@@ -329,13 +350,15 @@ updateActiveAlpha = function(key)
     end
     if viewer:GetAlpha() ~= 1 then rawSetAlpha(viewer, 1) end
     for _, item in ipairs(items) do
-        alphaItemKeys[item] = key
-        -- This finishes after Blizzard has chosen between aura and cooldown display.
-        if key ~= "BuffIcon" and not alphaItemHooked[item] and item.CacheCooldownValues then
-            hooksecurefunc(item, "CacheCooldownValues", updateItemAlpha)
-            alphaItemHooked[item] = true
+        if not item.trackerID or item:GetParent() == viewer then
+            alphaItemKeys[item] = key
+            -- This finishes after Blizzard has chosen between aura and cooldown display.
+            if key ~= "BuffIcon" and not alphaItemHooked[item] and item.CacheCooldownValues then
+                hooksecurefunc(item, "CacheCooldownValues", updateItemAlpha)
+                alphaItemHooked[item] = true
+            end
+            updateItemAlpha(item)
         end
-        updateItemAlpha(item)
     end
 end
 
@@ -375,7 +398,7 @@ local function applyItemCount(item, s, style)
     local info = item.cooldownInfo
     local itemID = type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
     local text = itemCounts[item]
-    if not (s.itemCount and itemID) then
+    if not (Skin.db.profile.itemCount and itemID) then
         if text then text.holder:Hide() end
         return
     end
@@ -412,7 +435,7 @@ local function refreshItemCount(item)
     if not key then return end
     local s = Skin.db.profile[key]
     local info = item.cooldownInfo
-    local tracked = s.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
+    local tracked = Skin.db.profile.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
     countItems[item] = tracked and key or nil
     applyItemCount(item, s)
 end
@@ -426,8 +449,14 @@ function Skin:Apply(key, incremental)
     if not incremental then revisions[key] = (revisions[key] or 0) + 1 end
     local revision = revisions[key] or 0
     local items = Viewers:GetItems(key)
+    local native = Viewers:GetNativeItems(key)[1]
     alphaItems[key] = items
     for _, item in ipairs(items) do
+        if alphaItemKeys[item] and alphaItemKeys[item] ~= key then
+            rawSetAlpha(item, 1)
+            itemAlpha[item] = nil
+            alphaItemKeys[item] = nil
+        end
         fitNativeEffects(item, key)
         local countdown = countdownFontString(item)
         local text = countFontString(item)
@@ -436,7 +465,11 @@ function Skin:Apply(key, incremental)
             or previous.cooldownID ~= item.cooldownID or previous.icon ~= item.Icon
             or previous.cooldown ~= item.Cooldown or previous.text ~= text or previous.countdown ~= countdown
         if dirty then
-            applyItem(item, s, countdown)
+            -- Custom icons reset their countdown font when changing viewer groups.
+            if item.trackerID and previous and previous.key ~= key and state[item] then
+                state[item].cdFont = nil
+            end
+            applyItem(item, s, countdown, item.trackerID and native or nil)
             applied[item] = {
                 key = key, revision = revision, cooldownID = item.cooldownID, icon = item.Icon,
                 cooldown = item.Cooldown, text = text, countdown = countdown,
@@ -449,7 +482,7 @@ function Skin:Apply(key, incremental)
             item:HookScript("OnShow", refreshItemCount)
         end
         local info = item.cooldownInfo
-        local tracked = s.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
+        local tracked = self.db.profile.itemCount and type(info) == "table" and CATEGORY_ITEMS[info.spellCategoryID]
         countItems[item] = tracked and key or nil
         applyItemCount(item, s, dirty)
     end
@@ -487,139 +520,69 @@ function Skin:OnViewerMessage(_, key)
     if self.db.profile[key] then self:Apply(key, true) end
 end
 
-local LABELS = {
-    Essential = "Essential cooldowns",
-    Utility = "Utility cooldowns",
-    BuffIcon = "Buff icons",
-}
-
-function Skin:GetOptions()
-    local args = {
-        description = {
-            type = "description",
-            order = 1,
-            name = "Change how the cooldown icons look. Every option defaults to Blizzard's look.",
-        },
-    }
-
-    for i, key in ipairs(self.KEYS) do
-        local function s() return self.db.profile[key] end
-        local function set(field)
-            return function(_, value)
-                s()[field] = value
-                self:Apply(key)
-            end
-        end
-        args[key] = {
-            type = "group",
-            inline = true,
-            order = 10 + i,
-            name = LABELS[key],
-            args = {
-                square = {
-                    type = "toggle",
-                    order = 1,
-                    name = "Square icons",
-                    desc = "Remove Blizzard's rounded corners and frame.",
-                    get = function() return s().square end,
-                    set = set("square"),
-                },
-                zoom = {
-                    type = "range",
-                    order = 2,
-                    name = "Zoom",
-                    desc = "Crop the edges of the icon artwork.",
-                    min = 0, max = 0.3, step = 0.01, isPercent = true,
-                    get = function() return s().zoom end,
-                    set = set("zoom"),
-                },
-                borderSize = {
-                    type = "range",
-                    order = 3,
-                    name = "Border size",
-                    desc = "0 hides the border.",
-                    min = 0, max = 6, step = 1,
-                    get = function() return s().borderSize end,
-                    set = set("borderSize"),
-                },
-                borderColor = {
-                    type = "color",
-                    order = 4,
-                    name = "Border color",
-                    hasAlpha = true,
-                    disabled = function() return s().borderSize == 0 end,
-                    get = function()
-                        local c = s().borderColor
-                        return c.r, c.g, c.b, c.a
-                    end,
-                    set = function(_, r, g, b, a)
-                        s().borderColor = { r = r, g = g, b = b, a = a }
-                        self:Apply(key)
-                    end,
-                },
-                countSize = {
-                    type = "range",
-                    order = 5,
-                    name = "Stack text size",
-                    desc = "0 keeps Blizzard's size.",
-                    min = 0, max = 32, step = 1,
-                    get = function() return s().countSize end,
-                    set = set("countSize"),
-                },
-                countFont = {
-                    type = "select",
-                    order = 5.5,
-                    name = "Stack text font",
-                    desc = "Font of the stack count and the Healthstone charges.",
-                    values = function()
-                        local values = { [""] = "Blizzard default" }
-                        for _, name in ipairs(LSM:List("font")) do values[name] = name end
-                        return values
-                    end,
-                    get = function() return s().countFont end,
-                    set = set("countFont"),
-                },
-                textOutline = {
-                    type = "select",
-                    order = 6.2,
-                    name = "Text outline",
-                    desc = "Outline of the cooldown countdown and the stack count.",
-                    values = { [""] = "Blizzard default", NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick outline" },
-                    sorting = { "", "NONE", "OUTLINE", "THICKOUTLINE" },
-                    get = function() return s().textOutline end,
-                    set = set("textOutline"),
-                },
-                activeOpaque = {
-                    type = "toggle",
-                    order = 7,
-                    name = "Full opacity when active",
-                    desc = "Icons whose buff or aura is running are shown at 100% opacity, while the others keep the viewer's opacity set in Edit Mode.",
-                    width = "double",
-                    get = function() return s().activeOpaque end,
-                    set = set("activeOpaque"),
-                },
-                itemCount = {
-                    type = "toggle",
-                    order = 8,
-                    name = "Healthstone charges",
-                    desc = "Show how many uses a Healthstone or Demonic Healthstone has left as a stack count.",
-                    get = function() return s().itemCount end,
-                    set = set("itemCount"),
-                },
-            },
-        }
+function Skin:DescribeTrackers()
+    local Printer = RanothsCooldownManager:GetModule("Printer")
+    local function value(v)
+        if issecretvalue(v) then return "<restricted>" end
+        if type(v) == "number" then return string.format("%.4g", v) end
+        return tostring(v)
     end
+    local function describe(item, key, label)
+        local st, previous = state[item], applied[item]
+        local s = self.db.profile[key]
+        local coords = item.Icon and { item.Icon:GetTexCoord() } or {}
+        local crop = {}
+        for i, coordinate in ipairs(coords) do crop[i] = value(coordinate) end
+        local countdown = countdownFontString(item)
+        local font, size, flags
+        if countdown then font, size, flags = countdown:GetFont() end
+        local count = countFontString(item)
+        local countFont, countSize
+        if count then countFont, countSize = count:GetFont() end
+        Printer:Print(label .. " group=" .. key .. " applied=" .. value(previous and previous.key)
+            .. " base=" .. value(item.skinGroup) .. " scale=" .. value(item:GetEffectiveScale())
+            .. " square=" .. value(s.square) .. " zoom=" .. value(s.zoom)
+            .. " alpha=" .. value(item:GetAlpha()) .. " viewerAlpha=" .. value(Viewers:Get(key):GetAlpha())
+            .. " alphaOwner=" .. value(alphaItemKeys[item]) .. " activeOpaque=" .. value(s.activeOpaque)
+            .. " crop=" .. table.concat(crop, ","))
+        Printer:Print("  mask=" .. value(st and st.mask ~= nil) .. " masked=" .. value(st and st.masked)
+            .. " overlay=" .. value(st and st.overlay and st.overlay:GetAlpha())
+            .. " border=" .. value(s.borderSize) .. "/" .. value(st and st.border and st.border:IsShown())
+            .. " countdown=" .. value(font) .. "/" .. value(size) .. "/" .. value(flags)
+            .. " count=" .. value(countFont) .. "/" .. value(countSize))
+    end
+    Printer:Print("Tracker skin diagnostic (run after moving Utility -> Essential; no styling is changed):")
+    local Trackers = RanothsCooldownManager:GetModule("CustomTrackers")
+    for _, key in ipairs(self.KEYS) do
+        local items = Trackers:GetItems(key)
+        if #items > 0 then
+            local native = Viewers:GetNativeItems(key)[1]
+            if native then describe(native, key, "Native") end
+            for _, item in ipairs(items) do describe(item, key, "Tracker " .. value(item.trackerID)) end
+        end
+    end
+end
 
-    return { type = "group", name = "Icon skin", args = args }
+function Skin:MigrateItemCount()
+    local profile = self.db.profile
+    local enabled = rawget(profile, "itemCount")
+    for _, key in ipairs(self.KEYS) do
+        if enabled == nil and rawget(profile[key], "itemCount") == false then
+            enabled = false
+        end
+        profile[key].itemCount = nil
+    end
+    profile.itemCount = enabled ~= false
 end
 
 function Skin:OnProfileRefresh()
+    self:MigrateItemCount()
     self:ApplyAll()
 end
 
 function Skin:OnInitialize()
     self.db = RanothsCooldownManager.db:RegisterNamespace("Skin", defaults)
-    Options:Register("Skin", self:GetOptions(), 40)
+    self:MigrateItemCount()
 end
 
 function Skin:OnEnable()

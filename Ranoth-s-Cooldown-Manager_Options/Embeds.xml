@@ -1,0 +1,5 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <Include file="..\Ranoth-s-Cooldown-Manager\libs\AceGUI-3.0\AceGUI-3.0.xml"/>
+    <Include file="..\Ranoth-s-Cooldown-Manager\libs\AceConfig-3.0\AceConfig-3.0.xml"/>
+    <Include file="..\Ranoth-s-Cooldown-Manager\libs\AceDBOptions-3.0\AceDBOptions-3.0.xml"/>
+</Ui>

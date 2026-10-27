@@ -56,6 +56,12 @@ local commandList = {
         help = "Captures the last 100 glow lifecycle events for troubleshooting",
         argsHelp = "[start|stop]"
     },
+    ["trackerskin"] = {
+        func = function()
+            RanothsCooldownManager:GetModule("Skin"):DescribeTrackers()
+        end,
+        help = "Compares custom tracker skins with native icons without changing styling"
+    },
     ["resources"] = {
         func = function()
             RanothsCooldownManager:GetModule("Resources"):Describe()

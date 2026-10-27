@@ -11,7 +11,6 @@ local IconLayout = RanothsCooldownManager:NewModule("IconLayout", "AceEvent-3.0"
 
 local Viewers = RanothsCooldownManager:GetModule("Viewers")
 local Safe = RanothsCooldownManager:GetModule("Safe")
-local Options = RanothsCooldownManager:GetModule("Options")
 
 -- Essential is already centered and never hides icons, Utility never hides icons, so only BuffIcon can compact.
 IconLayout.KEYS = { "Utility", "BuffIcon" }
@@ -28,10 +27,33 @@ local hookedItems = {}
 local applying = {}
 local savedPoints = {} -- item -> Blizzard's anchors before we moved it
 local REQUESTED = "RCM_ICON_LAYOUT_REQUESTED"
+local combined = {}
+local contentHeights = {}
+local contentWidths = {}
+
+local function hasCustomItems(key)
+    local Trackers = RanothsCooldownManager:GetModule("CustomTrackers", true)
+    return Trackers and Trackers.db and Trackers:HasActiveItems(key)
+end
+
+function IconLayout:GetContentHeight(key)
+    return contentHeights[key]
+end
+
+function IconLayout:GetContentWidth(key)
+    return contentWidths[key]
+end
+
+local function setContentHeight(key, height, width)
+    if contentHeights[key] == height and contentWidths[key] == width then return end
+    contentHeights[key] = height
+    contentWidths[key] = width
+    RanothsCooldownManager:GetModule("Layout"):Request()
+end
 
 function IconLayout:Request(key)
     local settings = self.db.profile[key]
-    if not settings or not (settings.center or settings.compact) then return end
+    if not combined[key] and not hasCustomItems(key) and not (settings and (settings.center or settings.compact)) then return end
     Safe:Notify(REQUESTED, key)
 end
 
@@ -54,11 +76,13 @@ local function restore(key)
             for _, p in ipairs(points) do
                 Safe.SetPoint(item, p[1], p[2], p[3], p[4], p[5])
             end
+            RanothsCooldownManager:GetModule("Borders"):Request()
         end
     end
 end
 
 local function isSupported(key)
+    if key == "Essential" then return hasCustomItems(key) or combined[key] end
     for _, k in ipairs(IconLayout.KEYS) do
         if k == key then return true end
     end
@@ -83,6 +107,8 @@ end
 --- Shown icons in display order. Uses layoutIndex when every icon has one, otherwise reading order.
 local function getActive(key)
     local active = {}
+    local Trackers = RanothsCooldownManager:GetModule("CustomTrackers", true)
+    if Trackers and Trackers.db then Trackers:SyncGeometry(key) end
     for _, item in ipairs(Viewers:GetItems(key)) do
         if item:IsShown() then
             local m = measure(item)
@@ -92,24 +118,32 @@ local function getActive(key)
 
     local allIndexed = #active > 0
     for _, m in ipairs(active) do
-        if type(m.frame.layoutIndex) ~= "number" then
+        if not m.frame.trackerID and type(m.frame.layoutIndex) ~= "number" then
             allIndexed = false
             break
         end
     end
     table.sort(active, function(a, b)
+        if a.frame.trackerID or b.frame.trackerID then
+            if not a.frame.trackerID then return true end
+            if not b.frame.trackerID then return false end
+            return a.frame.trackerID < b.frame.trackerID
+        end
         if allIndexed then return a.frame.layoutIndex < b.frame.layoutIndex end
         local ta, tb = math.floor(a.top + 0.5), math.floor(b.top + 0.5)
         if ta ~= tb then return ta > tb end
         return a.left < b.left
     end)
+    if Trackers and Trackers.db then Trackers:OrderItems(active) end
     return active
 end
 
 --- Icons per row when compacting: the viewer's own stride when it has one, otherwise what fits in its width.
 local function getStride(viewer, active, spacingPx)
-    if type(viewer.stride) == "number" and viewer.stride > 0 then
-        return viewer.stride
+    local container = viewer.GetItemContainerFrame and viewer:GetItemContainerFrame() or viewer
+    local stride = container.stride or viewer.iconLimit
+    if type(stride) == "number" and stride > 0 then
+        return stride
     end
     local first = active[1]
     if not first then return 1 end
@@ -151,24 +185,63 @@ end
 --- so this also runs in combat, which matters because buffs mostly change during combat.
 --- @param key string One of IconLayout.KEYS
 function IconLayout:Apply(key)
-    local settings = self.db.profile[key]
-    if not settings or applying[key] or not (settings.center or settings.compact) then return end
+    local settings = self.db.profile[key] or {}
+    local custom = hasCustomItems(key)
+    if applying[key] then return end
+    if combined[key] and not custom then
+        restore(key)
+        combined[key] = nil
+        setContentHeight(key, nil)
+    end
+    if not custom and not (settings.center or settings.compact) then return end
 
     local viewer = Viewers:Get(key)
     if not viewer or not viewer:GetLeft() or not viewer:GetTop() then return end
 
     local active = getActive(key)
-    if #active == 0 then return end
+    if #active == 0 then setContentHeight(key, nil); return end
 
     applying[key] = true
     local vs = viewer:GetEffectiveScale()
     local viewerLeft, viewerTop = viewer:GetLeft() * vs, viewer:GetTop() * vs
     local viewerWidth = viewer:GetWidth() * vs
     local spacingPx = self.db.profile.spacing * vs
+    local rowSpacingPx = spacingPx
+    if custom and not settings.compact then
+        local container = viewer.GetItemContainerFrame and viewer:GetItemContainerFrame() or viewer
+        -- Blizzard's grid applies padding in each icon's local coordinates, before its icon scale.
+        local scale = active[1].scale
+        spacingPx = (container.childXPadding or 0) * scale
+        rowSpacingPx = (container.childYPadding or 0) * scale
+    end
 
-    if settings.compact then
+    if custom and not settings.compact then
+        local container = viewer.GetItemContainerFrame and viewer:GetItemContainerFrame() or viewer
+        local stride = getStride(viewer, active, spacingPx)
+        local horizontal = container.isHorizontal ~= false
+        local across = horizontal and math.min(stride, #active) or math.ceil(#active / stride)
+        local down = horizontal and math.ceil(#active / stride) or math.min(stride, #active)
+        local width, height = active[1].width, active[1].height
+        local totalHeight = down * height + (down - 1) * rowSpacingPx
+        for i, m in ipairs(active) do
+            local column = horizontal and ((i - 1) % stride) or math.floor((i - 1) / stride)
+            local row = horizontal and math.floor((i - 1) / stride) or ((i - 1) % stride)
+            local count = across
+            if horizontal then count = math.min(stride, #active - row * stride) end
+            local rowWidth = count * width + (count - 1) * spacingPx
+            local left = viewerLeft
+            if settings.center or key == "Essential" then left = left + (viewerWidth - rowWidth) / 2
+            elseif container.layoutFramesGoingRight == false then left = left + viewerWidth - rowWidth end
+            if container.layoutFramesGoingRight == false then column = count - 1 - column end
+            if container.layoutFramesGoingUp then row = down - 1 - row end
+            place(m, viewer, left + column * (width + spacingPx), viewerTop - row * (height + rowSpacingPx))
+        end
+        combined[key] = true
+        setContentHeight(key, totalHeight / vs, (across * width + (across - 1) * spacingPx) / vs)
+    elseif settings.compact then
         local stride = getStride(viewer, active, spacingPx)
         local rowTop = viewerTop
+        local contentWidth = 0
         for start = 1, #active, stride do
             local row, rowWidth, rowHeight = {}, 0, 0
             for i = start, math.min(start + stride - 1, #active) do
@@ -178,12 +251,17 @@ function IconLayout:Apply(key)
             end
 
             local x = viewerLeft
-            if settings.center then x = viewerLeft + (viewerWidth - rowWidth) / 2 end
+            contentWidth = math.max(contentWidth, rowWidth)
+            if settings.center or key == "Essential" then x = viewerLeft + (viewerWidth - rowWidth) / 2 end
             for _, m in ipairs(row) do
                 place(m, viewer, x, rowTop)
                 x = x + m.width + spacingPx
             end
-            rowTop = rowTop - rowHeight - spacingPx
+            rowTop = rowTop - rowHeight - rowSpacingPx
+        end
+        if custom then
+            combined[key] = true
+            setContentHeight(key, (viewerTop - rowTop - rowSpacingPx) / vs, contentWidth / vs)
         end
     else
         for _, row in ipairs(groupRows(active)) do
@@ -197,10 +275,11 @@ function IconLayout:Apply(key)
         end
     end
     applying[key] = false
+    RanothsCooldownManager:GetModule("Borders"):Request()
 end
 
 function IconLayout:ApplyAll()
-    for _, key in ipairs(self.KEYS) do
+    for _, key in ipairs({ "Essential", "Utility", "BuffIcon" }) do
         self:Apply(key)
     end
 end
@@ -209,7 +288,13 @@ local function hookItems(key)
     for _, item in ipairs(Viewers:GetItems(key)) do
         if not hookedItems[item] then
             hookedItems[item] = true
-            local function apply() IconLayout:Request(key) end
+            local function apply()
+                if item.trackerID then
+                    for _, group in ipairs({ "Essential", "Utility", "BuffIcon" }) do IconLayout:Request(group) end
+                else
+                    IconLayout:Request(key)
+                end
+            end
             IconLayout:SecureHookScript(item, "OnShow", apply)
             IconLayout:SecureHookScript(item, "OnHide", apply)
         end
@@ -217,20 +302,26 @@ local function hookItems(key)
 end
 
 local viewerHooks = {}
+local containerHooks = {}
 
 local function hookViewer(key)
     local viewer = Viewers:Get(key)
     if not viewer then return end
+    local function relayout()
+        -- Blizzard just re-anchored every icon, so any saved anchors are stale
+        for _, item in ipairs(Viewers:GetItems(key)) do savedPoints[item] = nil end
+        IconLayout:Request(key)
+    end
     if not viewerHooks[viewer] then
         viewerHooks[viewer] = true
-        local function relayout()
-            -- Blizzard just re-anchored every icon, so any saved anchors are stale
-            for _, item in ipairs(Viewers:GetItems(key)) do savedPoints[item] = nil end
-            IconLayout:Request(key)
-        end
         -- Layout() also runs on its own when Edit Mode changes the icon size, without RefreshLayout.
         if viewer.RefreshLayout then IconLayout:SecureHook(viewer, "RefreshLayout", relayout) end
         if viewer.Layout then IconLayout:SecureHook(viewer, "Layout", relayout) end
+    end
+    local container = viewer.GetItemContainerFrame and viewer:GetItemContainerFrame()
+    if container and container ~= viewer and not containerHooks[container] then
+        containerHooks[container] = true
+        IconLayout:SecureHook(container, "Layout", relayout)
     end
     hookItems(key)
 end
@@ -259,7 +350,7 @@ function IconLayout:SetOption(key, option, value)
 
     settings[option] = value and true or false
     hookViewer(key)
-    if settings.center or settings.compact then
+    if settings.center or settings.compact or hasCustomItems(key) then
         self:Apply(key)
     else
         restore(key)
@@ -276,82 +367,28 @@ function IconLayout:Describe(key)
     return text
 end
 
-local LABELS = {
-    Utility = "Utility cooldowns",
-    BuffIcon = "Buff icons",
-}
-
-function IconLayout:GetOptions()
-    local args = {
-        description = {
-            type = "description",
-            order = 1,
-            name = "Center each row of icons in its viewer, or pack the active icons together without gaps.",
-        },
-        spacing = {
-            type = "range",
-            order = 2,
-            name = "Compact spacing",
-            desc = "Gap between icons when compacting.",
-            min = 0, max = 20, step = 1,
-            get = function() return self.db.profile.spacing end,
-            set = function(_, value)
-                self.db.profile.spacing = value
-                self:ApplyAll()
-            end,
-        },
-    }
-
-    for i, key in ipairs(self.KEYS) do
-        args[key] = {
-            type = "group",
-            inline = true,
-            order = 10 + i,
-            name = LABELS[key],
-            args = {
-                center = {
-                    type = "toggle",
-                    order = 1,
-                    name = "Center icons",
-                    get = function() return self.db.profile[key].center end,
-                    set = function(_, value) self:SetOption(key, "center", value) end,
-                },
-            },
-        }
-        if self.db.profile[key].compact ~= nil then
-            args[key].args.compact = {
-                type = "toggle",
-                order = 2,
-                name = "Compact icons",
-                get = function() return self.db.profile[key].compact end,
-                set = function(_, value) self:SetOption(key, "compact", value) end,
-            }
-        end
-    end
-
-    return { type = "group", name = "Icons", args = args }
-end
-
 function IconLayout:OnProfileRefresh()
     for _, key in ipairs(self.KEYS) do
         local settings = self.db.profile[key]
-        if settings.center or settings.compact then
+        if settings.center or settings.compact or hasCustomItems(key) then
             hookViewer(key)
             self:Apply(key)
         else
             restore(key)
         end
     end
+    self:Apply("Essential")
 end
 
 function IconLayout:OnInitialize()
     self.db = RanothsCooldownManager.db:RegisterNamespace("IconLayout", defaults)
-    Options:Register("IconLayout", self:GetOptions(), 30)
 end
 
 function IconLayout:OnEnable()
     self:RegisterMessage(REQUESTED, "OnLayoutRequested")
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "OnViewerAvailable")
+    self:RegisterMessage(Viewers.MESSAGES.LAYOUT_UPDATED, "OnViewerAvailable")
+    self:RegisterMessage(Viewers.MESSAGES.SHOWN, "OnViewerAvailable")
     for _, key in ipairs(self.KEYS) do
         hookViewer(key)
     end
@@ -361,5 +398,6 @@ end
 function IconLayout:OnDisable()
     wipe(hookedItems)
     wipe(viewerHooks)
+    wipe(containerHooks)
     wipe(applying)
 end
