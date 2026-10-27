@@ -9,6 +9,8 @@ local GROUPS = { Essential = "Essential cooldowns", Utility = "Utility cooldowns
 local defaults = { profile = { entries = {}, nextID = 1 } }
 local frames = {}
 local pool = {}
+local availableSpells = {}
+local availabilityDirty = true
 local SLOTS = {
     [1] = "Head", [2] = "Neck", [3] = "Shoulders", [4] = "Shirt", [5] = "Chest",
     [6] = "Waist (belt)", [7] = "Legs", [8] = "Feet", [9] = "Wrists", [10] = "Hands",
@@ -58,12 +60,42 @@ function Trackers:RemoveBuffEntries()
     end
 end
 
+function Trackers:IsAvailable(entry)
+    return entry.kind ~= "cooldown" or entry.hideUnavailable == false or availableSpells[entry.spellID] == true
+end
+
+function Trackers:RefreshAvailability()
+    if InCombatLockdown() then return end
+    if availabilityDirty then wipe(availableSpells) end
+    availabilityDirty = false
+    for _, entry in pairs(self.db.profile.entries) do
+        if entry.kind == "cooldown" and entry.enabled and entry.hideUnavailable ~= false
+            and availableSpells[entry.spellID] == nil then
+            local player = C_SpellBook.IsSpellKnownOrInSpellBook(entry.spellID, Enum.SpellBookSpellBank.Player, true)
+            local pet = C_SpellBook.IsSpellKnownOrInSpellBook(entry.spellID, Enum.SpellBookSpellBank.Pet, true)
+            if issecretvalue(player) or issecretvalue(pet) then
+                Printer:Print("Spellbook availability for spell " .. entry.spellID .. " is restricted; hiding its tracker.")
+                availableSpells[entry.spellID] = false
+            else
+                availableSpells[entry.spellID] = player or pet
+            end
+        end
+    end
+end
+
+function Trackers:OnSpellbookChanged(event, unit)
+    if (event == "UNIT_PET" or event == "PLAYER_SPECIALIZATION_CHANGED") and unit ~= "player" then return end
+    availabilityDirty = true
+    if InCombatLockdown() then return end
+    self:Refresh()
+end
+
 function Trackers:GetItems(key)
     local result = {}
     if not self:IsEnabled() then return result end
     for id, entry in pairs(self.db.profile.entries) do
         local frame = frames[id]
-        if entry.enabled and entry.group == key and frame and frame:GetParent() == Viewers:Get(key) then
+        if entry.enabled and self:IsAvailable(entry) and entry.group == key and frame and frame:GetParent() == Viewers:Get(key) then
             result[#result + 1] = frame
         end
     end
@@ -254,7 +286,7 @@ local function setItemCooldown(frame, start, duration, enabled, gcd, label)
 end
 
 function Trackers:UpdateFrame(frame, entry)
-    local shown = entry.enabled and self:IsEnabled() and Viewers:Get(entry.group) ~= nil
+    local shown = entry.enabled and self:IsEnabled() and self:IsAvailable(entry) and Viewers:Get(entry.group) ~= nil
     local count = frame.Applications.Applications
     frame.Cooldown:Clear()
     frame:SetScript("OnUpdate", nil)
@@ -322,6 +354,7 @@ end
 
 function Trackers:Refresh()
     self:RemoveBuffEntries()
+    self:RefreshAvailability()
     for id, frame in pairs(frames) do
         local entry = self.db.profile.entries[id]
         if not entry then
@@ -410,7 +443,10 @@ function Trackers:Add(value, kind, group)
     return true
 end
 
-function Trackers:OnProfileRefresh() self:Refresh() end
+function Trackers:OnProfileRefresh()
+    availabilityDirty = true
+    self:Refresh()
+end
 
 function Trackers:OnItemDataReceived(_, itemID, success)
     for id, entry in pairs(self.db.profile.entries) do
@@ -435,6 +471,11 @@ function Trackers:OnInitialize()
 end
 
 function Trackers:OnEnable()
+    availabilityDirty = true
+    self:RegisterEvent("SPELLS_CHANGED", "OnSpellbookChanged")
+    self:RegisterEvent("PET_BAR_UPDATE", "OnSpellbookChanged")
+    self:RegisterEvent("UNIT_PET", "OnSpellbookChanged")
+    self:RegisterEvent("PLAYER_REGEN_ENABLED", "OnSpellbookChanged")
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "Update")
     self:RegisterEvent("SPELL_UPDATE_CHARGES", "Update")
     self:RegisterEvent("BAG_UPDATE_COOLDOWN", "Update")
@@ -442,8 +483,8 @@ function Trackers:OnEnable()
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "Refresh")
     self:RegisterEvent("GET_ITEM_INFO_RECEIVED", "Update")
     self:RegisterEvent("ITEM_DATA_LOAD_RESULT", "OnItemDataReceived")
-    self:RegisterEvent("PLAYER_ENTERING_WORLD", "Refresh")
-    self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", "Refresh")
+    self:RegisterEvent("PLAYER_ENTERING_WORLD", "OnSpellbookChanged")
+    self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", "OnSpellbookChanged")
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "Refresh")
     self:RegisterMessage(Viewers.MESSAGES.LAYOUT_UPDATED, "OnViewerMessage")
     self:RegisterMessage(Viewers.MESSAGES.SHOWN, "OnViewerMessage")

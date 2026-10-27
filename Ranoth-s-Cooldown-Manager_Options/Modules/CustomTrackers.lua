@@ -42,6 +42,11 @@ function Trackers:GetOptions()
         end
         args["tracker" .. id] = { type = "group", name = name, order = 10 + id,
             args = {
+                hideUnavailable = { type = "toggle", name = "Hide unavailable ability", order = 1.5,
+                    hidden = entry.kind ~= "cooldown",
+                    desc = "Hide unless the ability is known or in your player or current pet spellbook. Checked outside combat; the last result is kept during combat.",
+                    get = function() return entry.hideUnavailable ~= false end,
+                    set = function(_, value) set("hideUnavailable", value) end },
                 enabled = { type = "toggle", name = "Enabled", order = 1,
                     get = function() return entry.enabled end, set = function(_, value) set("enabled", value) end },
                 group = { type = "select", name = "Group", order = 2, values = GROUPS,

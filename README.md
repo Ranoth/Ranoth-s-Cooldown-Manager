@@ -47,6 +47,16 @@ slot. Select an icon group, then click **Add tracker**. Each tracker has enable,
 group, position, and removal controls. Settings are saved with the RCM profile.
 For consumables, choose **Bag item cooldown** and enter an item ID.
 
+Spell trackers have **Hide unavailable ability** enabled by default, including
+existing trackers. RCM checks the player and current pet spellbooks (including
+override spells) outside combat, and hides abilities absent from both. For
+example, Suffering and Devour Magic follow the currently summoned pet. Hidden
+unavailable abilities do not reserve icon slots or stack height. Spellbook,
+specialization and pet changes refresh the cached result; during combat the
+last result is kept until combat ends. Turn the option off for spell IDs you
+want displayed regardless of spellbook membership. Item and equipment trackers
+are unaffected.
+
 Examples:
 
 - Soulburn: `385899`, **Spell cooldown**, **Essential cooldowns** or
