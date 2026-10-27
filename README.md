@@ -45,6 +45,7 @@ Open RCM settings and select **Custom trackers**. Choose **Spell cooldown** and
 enter a spell ID, or choose **Equipped item cooldown** and select an equipment
 slot. Select an icon group, then click **Add tracker**. Each tracker has enable,
 group, position, and removal controls. Settings are saved with the RCM profile.
+For consumables, choose **Bag item cooldown** and enter an item ID.
 
 Examples:
 
@@ -52,6 +53,17 @@ Examples:
   **Utility cooldowns**. This tracks the spell cooldown, not its buff.
 - Belt: **Equipped item cooldown**, **Waist (belt)**, **Utility cooldowns**.
 - Trinket: **Equipped item cooldown**, **Trinket 1** or **Trinket 2**.
+- Goblin Glider Kit: **Bag item cooldown**, Item ID `109076`.
+
+Bag-item trackers use `C_Item.GetItemIconByID` and `C_Item.GetItemSpell` to
+resolve the item icon and use-spell ID. Their cooldown comes from
+`C_Item.GetItemCooldown`, not the spell cooldown, so item/category cooldowns
+remain authoritative. Quantity is the carried stack count, excluding bank and
+account-bank stock. At zero, the icon stays visible, desaturated, with `0`.
+Custom tracker count text renders behind the cooldown countdown.
+Bag changes and item cooldown events update it; uncached item data is requested
+asynchronously. Hovering shows the item tooltip. Items without an on-use cooldown
+can display quantity but do not gain a fabricated spell timer.
 
 Equipment trackers follow the item currently equipped in the selected slot:
 their icon, tooltip, and cooldown update after equipment changes. Empty slots

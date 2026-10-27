@@ -54,7 +54,7 @@ function Trackers:RemoveBuffEntries()
         end
     end
     if removed > 0 then
-        Printer:Print("Removed " .. removed .. " custom buff tracker(s). Custom trackers now support spell and equipped-item cooldowns only.")
+        Printer:Print("Removed " .. removed .. " custom buff tracker(s). Custom trackers support spell, equipped-item and bag-item cooldowns.")
     end
 end
 
@@ -168,6 +168,7 @@ local function create(id)
     if reused then
         reused.trackerID = id
         reused.warnedCooldown = nil
+        reused.requestedItemID = nil
         frames[id] = reused
         return reused
     end
@@ -206,7 +207,7 @@ local function create(id)
     end)
     local overlay = CreateFrame("Frame", nil, frame)
     overlay:SetAllPoints()
-    overlay:SetFrameLevel(frame.Cooldown:GetFrameLevel() + 1)
+    overlay:SetFrameLevel(frame.Cooldown:GetFrameLevel() - 1)
     local count = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
     count:SetPoint("BOTTOMRIGHT", -2, 2)
     frame.Applications = { Applications = count }
@@ -215,6 +216,8 @@ local function create(id)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if self.equipSlot then
             GameTooltip:SetInventoryItem("player", self.equipSlot)
+        elseif self.itemID then
+            GameTooltip:SetItemByID(self.itemID)
         else
             GameTooltip:SetSpellByID(self.spellID)
         end
@@ -223,6 +226,7 @@ local function create(id)
     frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
     frame.GetSpellID = function(self) return self.spellID end
     frame.GetEquipSlot = function(self) return self.equipSlot end
+    frame.GetItemID = function(self) return self.itemID end
     frame.GetCooldownFrame = function(self) return self.Cooldown end
     frame:Hide()
     frames[id] = frame
@@ -237,6 +241,18 @@ local function setIconTexture(frame, texture)
     frame.iconTexture = texture
 end
 
+local function setItemCooldown(frame, start, duration, enabled, gcd, label)
+    if issecretvalue(start) or issecretvalue(duration) or issecretvalue(enabled) or issecretvalue(gcd) then
+        if not frame.warnedCooldown then
+            Printer:Print("Cooldown data for " .. label .. " is restricted and cannot be displayed.")
+            frame.warnedCooldown = true
+        end
+    elseif start and duration and duration > 0 and (enabled == 1 or enabled == true) and not gcd then
+        frame.Cooldown:SetCooldown(start, duration)
+        frame.Icon:SetDesaturated(start + duration > GetTime())
+    end
+end
+
 function Trackers:UpdateFrame(frame, entry)
     local shown = entry.enabled and self:IsEnabled() and Viewers:Get(entry.group) ~= nil
     local count = frame.Applications.Applications
@@ -247,22 +263,29 @@ function Trackers:UpdateFrame(frame, entry)
     count:SetText("")
     frame.spellID = entry.kind == "cooldown" and entry.spellID or nil
     frame.equipSlot = entry.kind == "slot" and entry.slot or nil
+    frame.itemID = entry.kind == "item" and entry.itemID or nil
+    if not frame.itemID then frame.requestedItemID = nil end
     if shown and entry.kind == "slot" then
         local texture = GetInventoryItemTexture("player", entry.slot)
         setIconTexture(frame, texture)
         shown = GetInventoryItemID("player", entry.slot) ~= nil
         if shown then
             local start, duration, enabled, gcd = GetInventoryItemCooldown("player", entry.slot)
-            if issecretvalue(start) or issecretvalue(duration) or issecretvalue(enabled) or issecretvalue(gcd) then
-                if not frame.warnedCooldown then
-                    Printer:Print("Cooldown data for " .. SLOTS[entry.slot] .. " is restricted and cannot be displayed.")
-                    frame.warnedCooldown = true
-                end
-            elseif start and duration and duration > 0 and (enabled == 1 or enabled == true) and not gcd then
-                frame.Cooldown:SetCooldown(start, duration)
-                frame.Icon:SetDesaturated(start + duration > GetTime())
-            end
+            setItemCooldown(frame, start, duration, enabled, gcd, SLOTS[entry.slot])
         end
+    elseif shown and entry.kind == "item" then
+        setIconTexture(frame, C_Item.GetItemIconByID(entry.itemID) or 134400)
+        local _, spellID = C_Item.GetItemSpell(entry.itemID)
+        frame.spellID = spellID
+        if not C_Item.IsItemDataCachedByID(entry.itemID) and frame.requestedItemID ~= entry.itemID then
+            frame.requestedItemID = entry.itemID
+            C_Item.RequestLoadItemDataByID(entry.itemID)
+        end
+        local quantity = C_Item.GetItemCount(entry.itemID, false, false, false, false)
+        count:SetText(quantity)
+        local start, duration, enabled = C_Item.GetItemCooldown(entry.itemID)
+        setItemCooldown(frame, start, duration, enabled, false, "item " .. entry.itemID)
+        if not issecretvalue(quantity) and quantity == 0 then frame.Icon:SetDesaturated(true) end
     elseif shown then
         setIconTexture(frame, C_Spell.GetSpellTexture(entry.spellID))
         local charges = C_Spell.GetSpellCharges(entry.spellID)
@@ -350,9 +373,9 @@ function Trackers:OnStackLayout()
     for key in pairs(GROUPS) do self:OnViewerMessage(nil, key) end
 end
 
-function Trackers:Add(spellID, kind, group)
-    local id = tonumber(spellID)
-    if (kind ~= "slot" and kind ~= "cooldown") or not GROUPS[group] then
+function Trackers:Add(value, kind, group)
+    local id = tonumber(value)
+    if (kind ~= "slot" and kind ~= "cooldown" and kind ~= "item") or not GROUPS[group] then
         Printer:Print("Choose a supported cooldown type and icon group.")
         return false
     end
@@ -364,9 +387,14 @@ function Trackers:Add(spellID, kind, group)
         Printer:Print("Enter a valid spell ID. Spell data must be available before adding a tracker.")
         return false
     end
+    if kind == "item" and (not id or id < 1 or id > 2147483647 or id ~= math.floor(id) or not C_Item.DoesItemExistByID(id)) then
+        Printer:Print("Enter a valid item ID.")
+        return false
+    end
     for _, entry in pairs(self.db.profile.entries) do
-        if entry.kind == kind and ((kind == "slot" and entry.slot == id) or (kind == "cooldown" and entry.spellID == id)) then
-            Printer:Print("That spell or equipment slot already has a tracker.")
+        if entry.kind == kind and ((kind == "slot" and entry.slot == id)
+            or (kind == "cooldown" and entry.spellID == id) or (kind == "item" and entry.itemID == id)) then
+            Printer:Print("That spell, item or equipment slot already has a tracker.")
             return false
         end
     end
@@ -374,6 +402,7 @@ function Trackers:Add(spellID, kind, group)
     self.db.profile.nextID = key + 1
     self.db.profile.entries[key] = {
         spellID = kind == "cooldown" and id or nil, slot = kind == "slot" and id or nil,
+        itemID = kind == "item" and id or nil,
         kind = kind, group = group, enabled = true, position = 1,
     }
     self:Refresh()
@@ -382,6 +411,23 @@ function Trackers:Add(spellID, kind, group)
 end
 
 function Trackers:OnProfileRefresh() self:Refresh() end
+
+function Trackers:OnItemDataReceived(_, itemID, success)
+    for id, entry in pairs(self.db.profile.entries) do
+        if entry.kind == "item" and entry.itemID == itemID then
+            local frame = frames[id]
+            if frame then
+                if success == false then
+                    Printer:Print("Unable to load data for tracked item " .. itemID .. ".")
+                else
+                    self:UpdateFrame(frame, entry)
+                end
+            end
+            Options:Refresh()
+            return
+        end
+    end
+end
 
 function Trackers:OnInitialize()
     self.db = Addon.db:RegisterNamespace("CustomTrackers", defaults)
@@ -392,8 +438,10 @@ function Trackers:OnEnable()
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "Update")
     self:RegisterEvent("SPELL_UPDATE_CHARGES", "Update")
     self:RegisterEvent("BAG_UPDATE_COOLDOWN", "Update")
+    self:RegisterEvent("BAG_UPDATE_DELAYED", "Update")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "Refresh")
     self:RegisterEvent("GET_ITEM_INFO_RECEIVED", "Update")
+    self:RegisterEvent("ITEM_DATA_LOAD_RESULT", "OnItemDataReceived")
     self:RegisterEvent("PLAYER_ENTERING_WORLD", "Refresh")
     self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", "Refresh")
     self:RegisterMessage(Viewers.MESSAGES.AVAILABLE, "Refresh")

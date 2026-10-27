@@ -391,13 +391,21 @@ local function active(duration)
     return issecretvalue(zero) or not zero
 end
 
---- Equipped items (trinkets) cool down as items, like Blizzard displays them: their on-use spell only carries the
+--- Equipped and bag items cool down as items, like Blizzard displays them: their on-use spell only carries the
 --- short lockout shared by on-use items.
 --- @return table|nil duration, boolean busy, boolean handled
 local function itemCooldown(item)
     local slot = item.GetEquipSlot and item:GetEquipSlot()
-    if not slot or issecretvalue(slot) then return nil, false, false end
-    local start, length, enable, gcd = GetInventoryItemCooldown("player", slot)
+    local itemID = item.GetItemID and item:GetItemID()
+    if issecretvalue(slot) or issecretvalue(itemID) then return nil, true, true end
+    local start, length, enable, gcd
+    if slot then
+        start, length, enable, gcd = GetInventoryItemCooldown("player", slot)
+    elseif itemID then
+        start, length, enable = C_Item.GetItemCooldown(itemID)
+    else
+        return nil, false, false
+    end
     if issecretvalue(start) or issecretvalue(length) or issecretvalue(enable) or issecretvalue(gcd) then
         return nil, true, true -- Unreadable: keep whatever is tracked rather than guess.
     end
