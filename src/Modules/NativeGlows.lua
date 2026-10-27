@@ -117,7 +117,7 @@ end
 
 local function styleEdge(frame, item, key, color, thickness, level)
     local icon = item.Icon or item
-    local inset = Skin.db.profile[key].borderSize
+    local inset = Skin:GetGlowInset(key)
     local alpha = color.a or 1
     local previous = frame.edgeStyle
     if not previous or previous.icon ~= icon or previous.inset ~= inset then
@@ -316,7 +316,7 @@ end
 local function styleReady(item, s, key)
     local size = iconSizes[item]
     if not size then return false end
-    local inset = Skin.db.profile[key].borderSize
+    local inset = Skin:GetGlowInset(key)
     local width, height = size[1] - 2 * inset, size[2] - 2 * inset
     if width <= 0 or height <= 0 then return false end
     local thickness = math.min(s.thickness, width, height)
@@ -620,6 +620,7 @@ function NativeGlows:OnEnable()
     hooksecurefunc(Skin, "Apply", function(_, _, incremental)
         if not incremental then NativeGlows:Refresh() end
     end)
+    hooksecurefunc(Addon:GetModule("Borders"), "SetShared", function() NativeGlows:Refresh() end)
     for _, key in ipairs(KEYS) do self:OnViewerMessage(nil, key) end
 end
 

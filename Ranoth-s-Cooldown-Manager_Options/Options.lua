@@ -21,6 +21,7 @@ function Options:Build()
             general = {
                 type = "group", name = "General", order = 1,
                 args = {
+                    sharedBorders = Addon:GetModule("Borders"):GetToggle(),
                     debug = {
                         type = "toggle", name = "Debug mode",
                         desc = "Print extra diagnostic messages.", order = 1,

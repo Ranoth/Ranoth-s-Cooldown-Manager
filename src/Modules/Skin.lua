@@ -46,6 +46,13 @@ local applied = setmetatable({}, { __mode = "k" })
 local revisions = {}
 local nativeEffects = setmetatable({}, { __mode = "k" })
 
+function Skin:GetGlowInset(key)
+    local size = self.db.profile[key].borderSize
+    local sharing = RanothsCooldownManager:GetModule("Borders").db.profile
+    -- Shared seams are centered on the icon boundary rather than fully inset.
+    return sharing.enabled and size / 2 or size
+end
+
 --- Fit native ready/proc/pandemic/alert artwork to the area inside our border without replacing its animation.
 --- @param force boolean|nil Refit even if cached: pooled frames are re-anchored by Blizzard when acquired.
 --- @param levelOffset number|nil Extra level above the base, keeping Blizzard's order between stacked alerts.

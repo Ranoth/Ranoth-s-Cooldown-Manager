@@ -7,7 +7,7 @@ local WHITE = "Interface\\Buttons\\WHITE8X8"
 local entries, active = {}, {}
 local dirty = false
 local pixelSize
-local defaults = { profile = { icons = false, bars = false } }
+local defaults = { profile = { enabled = false } }
 
 local function snap(value)
     return math.floor(value / pixelSize + 0.5) * pixelSize
@@ -19,7 +19,7 @@ end
 
 function Borders:Request()
     if not self.db then return end
-    if not self.db.profile.icons and not self.db.profile.bars and #active == 0 then return end
+    if not self.db.profile.enabled and #active == 0 then return end
     Safe:Notify(REQUESTED, "all")
 end
 
@@ -41,7 +41,7 @@ function Borders:Register(frame, border, anchor, size, color, kind, key)
     end
     -- Styling can restore the original edge dimensions even when its settings did not change.
     if entry.collapsed then dirty = true end
-    if dirty or self.db.profile[kind] then self:Request() end
+    if dirty or self.db.profile.enabled then self:Request() end
 end
 
 local function restore(entry)
@@ -150,12 +150,7 @@ local function sharedHorizontal(a, b, seams)
     b.sides[1] = cutPieces(b.sides[1], cut)
 end
 
-local function sharesBorder(a, b, profile)
-    if a.kind == "bars" or b.kind == "bars" then return profile.bars end
-    return profile.icons
-end
-
-local function render(profile)
+local function render()
     local levels = {}
     for _, entry in ipairs(active) do
         local strata = entry.border:GetFrameStrata()
@@ -178,7 +173,7 @@ local function render(profile)
         for j = i + 1, #active do
             local b = active[j]
             if b.top < a.bottom - 0.01 then break end
-            if sharesBorder(a, b, profile) and b.left <= a.right + 0.01 and b.right >= a.left - 0.01 then
+            if b.left <= a.right + 0.01 and b.right >= a.left - 0.01 then
                 sharedVertical(a, b, candidates)
                 sharedVertical(b, a, candidates)
                 sharedHorizontal(a, b, candidates)
@@ -199,9 +194,7 @@ local function render(profile)
     for _, candidate in ipairs(candidates) do
         local pieces = { candidate }
         for _, previous in ipairs(drawn) do
-            if previous.shared or previous.owner == candidate.owner or sharesBorder(previous.owner, candidate.owner, profile) then
-                pieces = cutPieces(pieces, previous)
-            end
+            pieces = cutPieces(pieces, previous)
             if #pieces == 0 then break end
         end
         for _, piece in ipairs(pieces) do
@@ -242,7 +235,7 @@ function Borders:Refresh()
     dirty = false
     wipe(active)
     for _, entry in pairs(entries) do
-        local enabled = self.db.profile[entry.kind] or (entry.kind == "icons" and self.db.profile.bars)
+        local enabled = self.db.profile.enabled
         if enabled and entry.kind == "bars" then
             local layout, bars, resources = Addon:GetModule("Layout"), Addon:GetModule("Bars"), Addon:GetModule("Resources")
             local settings = layout.db.profile.stack[entry.key]
@@ -280,22 +273,31 @@ function Borders:Refresh()
         if a.top ~= b.top then return a.top > b.top end
         return a.left < b.left
     end)
-    render(self.db.profile)
+    render()
 end
 
-function Borders:SetShared(kind, value)
-    self.db.profile[kind] = value
+function Borders:SetShared(value)
+    self.db.profile.enabled = value
     dirty = true
     self:Request()
+end
+
+function Borders:MigrateProfile()
+    local profile = self.db.profile
+    if rawget(profile, "enabled") == nil then
+        profile.enabled = profile.icons == true or profile.bars == true
+    end
+    profile.icons, profile.bars = nil, nil
 end
 
 function Borders:OnProfileRefresh()
-    dirty = true
-    self:Request()
+    self:MigrateProfile()
+    self:SetShared(self.db.profile.enabled)
 end
 
 function Borders:OnInitialize()
     self.db = Addon.db:RegisterNamespace("Borders", defaults)
+    self:MigrateProfile()
 end
 
 function Borders:OnEnable()

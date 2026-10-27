@@ -2,14 +2,14 @@ local RanothsCooldownManager = LibStub("AceAddon-3.0"):GetAddon("Ranoth-s-Cooldo
 local Addon = RanothsCooldownManager
 local Borders = Addon:GetModule("Borders")
 
-function Borders:GetToggle(kind)
+function Borders:GetToggle()
     return {
         type = "toggle", order = 3, name = "Shared borders",
-        desc = "Draw touching " .. (kind == "icons" and "icon-to-icon" or "bar-to-bar and bar-to-viewer icon")
-            .. " borders as a single centered seam without changing layout. Uses the thicker border and the upper/left element's color.",
-        get = function() return self.db.profile[kind] end,
+        desc = "Draw touching icon and bar borders as a single centered seam without changing layout. "
+            .. "Includes bar-to-viewer contacts and restyled Blizzard bars. Uses the thicker border and the upper/left element's color.",
+        get = function() return self.db.profile.enabled end,
         set = function(_, value)
-            self:SetShared(kind, value)
+            self:SetShared(value)
         end,
     }
 end

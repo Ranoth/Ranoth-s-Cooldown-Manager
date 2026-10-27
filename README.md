@@ -108,18 +108,22 @@ charges disabled if any of their old viewer-specific toggles was disabled.
 
 ## Shared borders
 
-Two independent, profile-wide **Shared borders** toggles are available in
-**Icon skin** and **Custom bars** (both off by default). The bar toggle also
-covers Blizzard bars restyled through Resource skin. Touching bordered elements
+One profile-wide **General > Shared borders** toggle controls icons and bars
+together (off by default), including Blizzard bars restyled through Resource
+skin. Existing profiles keep sharing enabled if either old toggle was on.
+Touching bordered elements
 share a single centered seam without changing their positions or sizes.
-The bar toggle covers both bar-to-bar and bar-to-viewer icon contacts, even
-when the icon toggle is off. The icon toggle controls icon-to-icon seams.
+This covers icon-to-icon, bar-to-bar and bar-to-viewer icon contacts.
 Different border sizes use the thicker size; the upper/left element supplies
 the seam color and opacity. Gaps retain separate borders. Where a bar meets a
 narrower bar or viewer, the centered seam continues across the exposed overhang
 so the line does not step at the contact endpoints. Partially touching icon-only
 edges keep their exposed sections. Native icon padding that overlaps border
 bounds is supported as well.
+
+Custom proc, ready-flash, pandemic and debuff effects use half the configured
+border inset while sharing is enabled, matching the inward half
+of a centered seam. Turning sharing off restores their full border inset.
 
 Only RCM-drawn borders are affected, not Blizzard frame artwork, glows, or
 internal class-resource dividers. Geometry is checked on layout/visibility/style

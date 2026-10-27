@@ -56,8 +56,7 @@ local function draw(frame)
     end
     if not width or not height then return false end
     local s = frame.settings
-    local skin = Skin.db.profile[frame.viewerKey]
-    local inset = skin.borderSize
+    local inset = Skin:GetGlowInset(frame.viewerKey)
     local innerWidth, innerHeight = width - 2 * inset, height - 2 * inset
     if innerWidth <= 0 or innerHeight <= 0 then
         for _, line in ipairs(frame.lines) do line:Hide() end

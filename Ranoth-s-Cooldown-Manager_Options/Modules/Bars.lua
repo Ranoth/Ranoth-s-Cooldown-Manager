@@ -15,7 +15,6 @@ end
 
 function Bars:GetOptions()
     local args = {
-        sharedBorders = RanothsCooldownManager:GetModule("Borders"):GetToggle("bars"),
         description = {
             type = "description",
             order = 1,

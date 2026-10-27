@@ -11,7 +11,6 @@ local LABELS = {
 
 function Skin:GetOptions()
     local args = {
-        sharedBorders = RanothsCooldownManager:GetModule("Borders"):GetToggle("icons"),
         description = {
             type = "description",
             order = 1,
