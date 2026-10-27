@@ -216,10 +216,23 @@ end
 
 --- Attach a Blizzard frame to its slot. The anchor viewer is never touched.
 --- Anchors are only cleared once the new anchor is known to be valid, so a failure cannot leave the frame unpositioned.
+local function anchoredTo(frame, index, point, slot)
+    local p, relative, relativePoint, x, y = frame:GetPoint(index)
+    if issecretvalue(p) or issecretvalue(relativePoint) or issecretvalue(x) or issecretvalue(y) then return false end
+    return p == point and relative == slot and relativePoint == point and x == 0 and y == 0
+end
+
 local function attach(profile, key, frame, slot)
     if key == profile.anchorKey then return end
+    -- Re-anchoring an unchanged frame makes the client resolve its layout again for nothing.
+    local count = frame:GetNumPoints()
+    if isViewerKey(key) then
+        if count == 1 and anchoredTo(frame, 1, "TOP", slot) then return end
+    elseif count == 2 and anchoredTo(frame, 1, "TOPLEFT", slot) and anchoredTo(frame, 2, "BOTTOMRIGHT", slot) then
+        return
+    end
     local previous = {}
-    for i = 1, frame:GetNumPoints() do
+    for i = 1, count do
         previous[i] = { frame:GetPoint(i) }
     end
 

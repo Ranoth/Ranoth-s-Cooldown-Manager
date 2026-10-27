@@ -10,6 +10,7 @@ local defaults = { profile = { entries = {}, nextID = 1 } }
 local frames = {}
 local pool = {}
 local availableSpells = {}
+local checkedSpells = {}
 local availabilityDirty = true
 local SLOTS = {
     [1] = "Head", [2] = "Neck", [3] = "Shoulders", [4] = "Shirt", [5] = "Chest",
@@ -64,31 +65,55 @@ function Trackers:IsAvailable(entry)
     return entry.kind ~= "cooldown" or entry.hideUnavailable == false or availableSpells[entry.spellID] == true
 end
 
+--- Queries the spellbook outside combat; returns true when a tracked spell's availability changed.
 function Trackers:RefreshAvailability()
-    if InCombatLockdown() then return end
-    if availabilityDirty then wipe(availableSpells) end
+    if InCombatLockdown() then return false end
+    local force = availabilityDirty
     availabilityDirty = false
+    local changed = false
     for _, entry in pairs(self.db.profile.entries) do
+        local spellID = entry.spellID
         if entry.kind == "cooldown" and entry.enabled and entry.hideUnavailable ~= false
-            and availableSpells[entry.spellID] == nil then
-            local player = C_SpellBook.IsSpellKnownOrInSpellBook(entry.spellID, Enum.SpellBookSpellBank.Player, true)
-            local pet = C_SpellBook.IsSpellKnownOrInSpellBook(entry.spellID, Enum.SpellBookSpellBank.Pet, true)
+            and (force or availableSpells[spellID] == nil) then
+            local available
+            local player = C_SpellBook.IsSpellKnownOrInSpellBook(spellID, Enum.SpellBookSpellBank.Player, true)
+            local pet = C_SpellBook.IsSpellKnownOrInSpellBook(spellID, Enum.SpellBookSpellBank.Pet, true)
             if issecretvalue(player) or issecretvalue(pet) then
-                Printer:Print("Spellbook availability for spell " .. entry.spellID .. " is restricted; hiding its tracker.")
-                availableSpells[entry.spellID] = false
+                Printer:Print("Spellbook availability for spell " .. spellID .. " is restricted; hiding its tracker.")
+                available = false
             else
-                availableSpells[entry.spellID] = player or pet
+                available = player or pet
             end
+            if availableSpells[spellID] ~= available then changed = true end
+            availableSpells[spellID] = available
+            checkedSpells[spellID] = true
         end
+    end
+    if force then
+        -- Skipped entries (disabled or not hiding) must be rechecked when they come back.
+        for spellID in pairs(availableSpells) do
+            if not checkedSpells[spellID] then availableSpells[spellID] = nil end
+        end
+    end
+    wipe(checkedSpells)
+    return changed
+end
+
+--- Spellbook and pet events fire often; only a tracked ability appearing or disappearing needs a full refresh.
+function Trackers:OnSpellbookChanged(event, unit)
+    if (event == "UNIT_PET" or event == "PLAYER_SPECIALIZATION_CHANGED") and unit ~= "player" then return end
+    if event == "PLAYER_REGEN_ENABLED" and not availabilityDirty then return end
+    availabilityDirty = true
+    if InCombatLockdown() then return end
+    if self:RefreshAvailability() then
+        self:Refresh()
+    else
+        -- Talents can still change a tracked spell's icon or charges.
+        self:Update()
     end
 end
 
-function Trackers:OnSpellbookChanged(event, unit)
-    if (event == "UNIT_PET" or event == "PLAYER_SPECIALIZATION_CHANGED") and unit ~= "player" then return end
-    availabilityDirty = true
-    if InCombatLockdown() then return end
-    self:Refresh()
-end
+local function byTrackerID(a, b) return a.trackerID < b.trackerID end
 
 function Trackers:GetItems(key)
     local result = {}
@@ -99,7 +124,7 @@ function Trackers:GetItems(key)
             result[#result + 1] = frame
         end
     end
-    table.sort(result, function(a, b) return a.trackerID < b.trackerID end)
+    table.sort(result, byTrackerID)
     return result
 end
 
@@ -342,7 +367,9 @@ function Trackers:UpdateFrame(frame, entry)
             duration = C_Spell.GetSpellCooldownDuration(entry.spellID, true)
         end
         if duration then frame.Cooldown:SetCooldownFromDurationObject(duration) end
-        if duration and not charges then
+        local zero = duration and not charges and duration:IsZero()
+        -- Idle spells start no cooldown, so OnCooldownDone would never stop the poll.
+        if duration and not charges and (issecretvalue(zero) or not zero) then
             desaturationCurves()
             frame.desaturationDuration = duration
             frame.desaturationElapsed = 0.05
@@ -360,6 +387,22 @@ function Trackers:Update()
     for id, entry in pairs(self.db.profile.entries) do
         local frame = frames[id]
         if frame then self:UpdateFrame(frame, entry) end
+    end
+end
+
+--- Bag contents only affect bag-item trackers.
+function Trackers:UpdateItems()
+    for id, entry in pairs(self.db.profile.entries) do
+        local frame = frames[id]
+        if frame and entry.kind == "item" then self:UpdateFrame(frame, entry) end
+    end
+end
+
+--- Item data loads for every item the client sees; only tracked items need an update.
+function Trackers:OnItemInfoReceived(_, itemID)
+    for id, entry in pairs(self.db.profile.entries) do
+        local frame = frames[id]
+        if frame and entry.kind == "item" and entry.itemID == itemID then self:UpdateFrame(frame, entry) end
     end
 end
 
@@ -490,9 +533,9 @@ function Trackers:OnEnable()
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "Update")
     self:RegisterEvent("SPELL_UPDATE_CHARGES", "Update")
     self:RegisterEvent("BAG_UPDATE_COOLDOWN", "Update")
-    self:RegisterEvent("BAG_UPDATE_DELAYED", "Update")
+    self:RegisterEvent("BAG_UPDATE_DELAYED", "UpdateItems")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "Refresh")
-    self:RegisterEvent("GET_ITEM_INFO_RECEIVED", "Update")
+    self:RegisterEvent("GET_ITEM_INFO_RECEIVED", "OnItemInfoReceived")
     self:RegisterEvent("ITEM_DATA_LOAD_RESULT", "OnItemDataReceived")
     self:RegisterEvent("PLAYER_ENTERING_WORLD", "OnSpellbookChanged")
     self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", "OnSpellbookChanged")

@@ -176,9 +176,20 @@ local function place(m, viewer, left, top)
     local vs = viewer:GetEffectiveScale()
     local x = (left - viewer:GetLeft() * vs) / m.scale
     local y = (top - viewer:GetTop() * vs) / m.scale
-    savePoints(m.frame)
-    Safe.ClearAllPoints(m.frame)
-    Safe.SetPoint(m.frame, "TOPLEFT", viewer, "TOPLEFT", x, y)
+    local item = m.frame
+    savePoints(item)
+    -- Layout passes repeat for unchanged icons; re-anchoring them would only dirty the client's layout.
+    if item:GetNumPoints() == 1 then
+        local point, relative, relativePoint, px, py = item:GetPoint(1)
+        if not (issecretvalue(point) or issecretvalue(relativePoint) or issecretvalue(px) or issecretvalue(py))
+            and point == "TOPLEFT" and relative == viewer and relativePoint == "TOPLEFT"
+            and type(px) == "number" and type(py) == "number"
+            and math.abs(px - x) < 1e-4 and math.abs(py - y) < 1e-4 then
+            return
+        end
+    end
+    Safe.ClearAllPoints(item)
+    Safe.SetPoint(item, "TOPLEFT", viewer, "TOPLEFT", x, y)
 end
 
 --- Re-anchor a viewer's active icons according to its settings. Icons are not protected frames,

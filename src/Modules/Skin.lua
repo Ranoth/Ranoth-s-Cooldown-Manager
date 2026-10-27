@@ -199,11 +199,17 @@ local function applyBorder(item, st, icon, s, key)
     Borders:Register(item, st.border, icon, size, c, "icons", key)
 end
 
+local countdownCache = setmetatable({}, { __mode = "kv" })
 local function countdownFontString(item)
     local cooldown = item.Cooldown
     if not cooldown or not cooldown.GetRegions then return nil end
+    local cached = countdownCache[cooldown]
+    if cached then return cached end
     for _, region in ipairs({ cooldown:GetRegions() }) do
-        if region:GetObjectType() == "FontString" then return region end
+        if region:GetObjectType() == "FontString" then
+            countdownCache[cooldown] = region
+            return region
+        end
     end
 end
 

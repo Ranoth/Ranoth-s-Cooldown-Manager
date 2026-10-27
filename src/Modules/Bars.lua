@@ -208,9 +208,9 @@ local function classPowerInfo()
 end
 
 local function hasMana()
-    local ok, positive = pcall(function() return UnitPowerMax("player", MANA) > 0 end)
+    local max = UnitPowerMax("player", MANA)
     -- A secret maximum can only come from a pool that exists.
-    return not ok or positive
+    return issecretvalue(max) or max > 0
 end
 
 --- The main resource (Maelstrom, Insanity, Astral Power...) when it is moved to the class power bar so the
@@ -450,15 +450,13 @@ end
 -- Power bar --------------------------------------------------------------------------------------------------
 
 local function hasValue(v)
-    local ok, positive = pcall(function() return v > 0 end)
-    return not ok or positive
+    return issecretvalue(v) or v > 0
 end
 
 --- Percentage as a number, or nil when it cannot be computed. Falls back to the game's own percent API
 --- when the values are secret and cannot be used in arithmetic.
 local function powerPercent(powerType, value, max)
-    local ok, pct = pcall(function() return value / max * 100 end)
-    if ok then return pct end
+    if not issecretvalue(value) and not issecretvalue(max) then return value / max * 100 end
     if UnitPowerPercent then
         local ok2, api = pcall(UnitPowerPercent, "player", powerType, false, CurveConstants and CurveConstants.ScaleTo100)
         if ok2 then return api end
@@ -616,6 +614,13 @@ local function refreshMovedPrimary(frame, s, powerType, token)
     setShown("ClassPower", true)
 end
 
+local function pollFragments(frame, elapsed)
+    frame.pollElapsed = frame.pollElapsed + elapsed
+    if frame.pollElapsed < 0.1 then return end
+    frame.pollElapsed = 0
+    Bars:RefreshClassPower()
+end
+
 function Bars:RefreshClassPower()
     local frame, s = frames.ClassPower, profile("ClassPower")
     if not frame then return end
@@ -638,11 +643,11 @@ function Bars:RefreshClassPower()
     end
 
     local max = info.runes and 6 or UnitPowerMax("player", info.type)
-    local ok = pcall(function() max = math.min(max, MAX_SEGMENTS) end)
-    if not ok or not max or max <= 0 then
+    if issecretvalue(max) or not max or max <= 0 then
         setShown("ClassPower", false)
         return
     end
+    max = math.min(max, MAX_SEGMENTS)
 
     if frame.count ~= max then layoutSegments(frame, max) end
     if frame.styledPower ~= info then
@@ -678,12 +683,7 @@ function Bars:RefreshClassPower()
         if fractional and partial then
             if not frame.pollElapsed then
                 frame.pollElapsed = 0
-                frame:SetScript("OnUpdate", function(f, elapsed)
-                    f.pollElapsed = f.pollElapsed + elapsed
-                    if f.pollElapsed < 0.1 then return end
-                    f.pollElapsed = 0
-                    Bars:RefreshClassPower()
-                end)
+                frame:SetScript("OnUpdate", pollFragments)
             end
         elseif frame.pollElapsed then
             frame.pollElapsed = nil
@@ -846,10 +846,13 @@ local CAST_EVENTS = {
     "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
     "UNIT_SPELLCAST_EMPOWER_START", "UNIT_SPELLCAST_EMPOWER_UPDATE", "UNIT_SPELLCAST_EMPOWER_STOP",
 }
-local POWER_EVENTS = { "UNIT_POWER_UPDATE", "UNIT_POWER_FREQUENT", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER" }
+-- UNIT_POWER_FREQUENT reports every change; UNIT_POWER_UPDATE is a throttled duplicate of it.
+local POWER_EVENTS = { "UNIT_POWER_FREQUENT", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER" }
+local IS_CAST_EVENT = {}
+for _, event in ipairs(CAST_EVENTS) do IS_CAST_EVENT[event] = true end
 
 local function onEvent(_, event, _, castID)
-    if event:find("^UNIT_SPELLCAST") then
+    if IS_CAST_EVENT[event] then
         local s = profile("CastBar")
         if (event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED")
             and s.interruptEffect and s.mode == "custom"
@@ -862,7 +865,7 @@ local function onEvent(_, event, _, castID)
         Bars:RefreshCast()
     elseif event == "RUNE_POWER_UPDATE" then
         Bars:RefreshClassPower()
-    elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
+    elseif event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
         -- For power events the second payload argument is the changed power token, not a cast ID.
         local _, primaryToken = UnitPowerType("player")
         local moved = movedPrimary()
