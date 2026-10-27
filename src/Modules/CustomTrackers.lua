@@ -171,6 +171,14 @@ function Trackers:SyncGeometry(key)
             frame.IconOverlay:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", style.x, -style.y)
         end
         frame.Cooldown:SetHideCountdownNumbers(viewer.timerShown == false)
+        -- Same as Blizzard's items: tooltips only need mouse motion, and clicks pass through.
+        local tooltips = viewer.tooltipsShown ~= false
+        if frame.tooltipsShown ~= tooltips then
+            frame.tooltipsShown = tooltips
+            frame:SetMouseClickEnabled(false)
+            frame:SetMouseMotionEnabled(tooltips)
+            if not tooltips and GameTooltip:IsOwned(frame) then GameTooltip:Hide() end
+        end
     end
 end
 
@@ -243,7 +251,6 @@ local function create(id)
     local count = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
     count:SetPoint("BOTTOMRIGHT", -2, 2)
     frame.Applications = { Applications = count }
-    frame:EnableMouse(true)
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if self.equipSlot then
@@ -260,6 +267,8 @@ local function create(id)
     frame.GetEquipSlot = function(self) return self.equipSlot end
     frame.GetItemID = function(self) return self.itemID end
     frame.GetCooldownFrame = function(self) return self.Cooldown end
+    frame.HasVisualDataSource_Charges = function(self) return self.hasCharges end
+    frame.isCustomTracker = true
     frame:Hide()
     frames[id] = frame
     return frame
@@ -293,6 +302,7 @@ function Trackers:UpdateFrame(frame, entry)
     frame.desaturationDuration = nil
     frame.Icon:SetDesaturated(false)
     count:SetText("")
+    frame.hasCharges = false
     frame.spellID = entry.kind == "cooldown" and entry.spellID or nil
     frame.equipSlot = entry.kind == "slot" and entry.slot or nil
     frame.itemID = entry.kind == "item" and entry.itemID or nil
@@ -323,6 +333,7 @@ function Trackers:UpdateFrame(frame, entry)
         local charges = C_Spell.GetSpellCharges(entry.spellID)
         local duration
         if charges then
+            frame.hasCharges = true
             duration = C_Spell.GetSpellChargeDuration(entry.spellID)
             count:SetText(charges.currentCharges)
             desaturationCurves()

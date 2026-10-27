@@ -57,6 +57,15 @@ last result is kept until combat ends. Turn the option off for spell IDs you
 want displayed regardless of spellbook membership. Item and equipment trackers
 are unaffected.
 
+Hover tooltips on custom trackers follow their group's Cooldown Manager
+tooltip setting, and mouse clicks pass through them like native icons.
+
+Custom trackers play the ready flash at the end of their cooldown, following the
+destination group's **Ready flash** setting: Blizzard's flipbook look by
+default, or the custom square when enabled. Spells, charges, bag items and
+equipment use the same cooldown rules as native icons (the GCD alone never
+flashes).
+
 Examples:
 
 - Soulburn: `385899`, **Spell cooldown**, **Essential cooldowns** or

@@ -110,10 +110,12 @@ local function hookViewer(key, viewer)
             queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
         end)
     end
-    if viewer.SetTimerShown then
-        Viewers:SecureHook(viewer, "SetTimerShown", function()
-            queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
-        end)
+    for _, setter in ipairs({ "SetTimerShown", "SetTooltipsShown" }) do
+        if viewer[setter] then
+            Viewers:SecureHook(viewer, setter, function()
+                queueNotify(Viewers.MESSAGES.LAYOUT_UPDATED, key, viewer)
+            end)
+        end
     end
     Viewers:SecureHookScript(viewer, "OnShow", function()
         queueNotify(Viewers.MESSAGES.SHOWN, key, viewer)

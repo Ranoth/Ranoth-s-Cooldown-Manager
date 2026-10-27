@@ -37,6 +37,8 @@ local pandemicStyled = weak() -- pandemic frame -> { item, revision, level }
 local alertItems = weak() -- alert -> item it is styled for
 local iconSizes = weak() -- item -> { width, height } read out of combat
 local readyDurations = weak() -- item -> duration object of the tracked cooldown
+local readyFrames = weak() -- item -> square or flipbook currently showing its ready flash
+local flipbooks = weak() -- custom tracker -> replica of Blizzard's ready flipbook
 local revision = 0
 
 -- Tracing ------------------------------------------------------------------------------------
@@ -436,8 +438,60 @@ local function readyCooldown(item)
     return nil, active(C_Spell.GetSpellCooldownDuration(spellID, false))
 end
 
+--- Blizzard's flipbook is an animation timed from cooldown values that may be secret; the replica instead gates one
+--- texture per animation frame with a curve over the remaining duration, which only the engine evaluates.
+local FLIPBOOK_ATLAS, FLIPBOOK_ROWS, FLIPBOOK_COLUMNS, FLIPBOOK_DURATION = "UI-HUD-ActionBar-GCD-Flipbook", 11, 2, 0.75
+local FLIPBOOK_FRAMES = FLIPBOOK_ROWS * FLIPBOOK_COLUMNS
+local flipbookCurves
+
+local function styleFlipbook(item, key)
+    local flipbook = flipbooks[item]
+    if not flipbook then
+        local atlas = C_Texture.GetAtlasInfo(FLIPBOOK_ATLAS)
+        local file = atlas and (atlas.file or atlas.filename)
+        if not file then return nil end
+        if not flipbookCurves then
+            flipbookCurves = {}
+            local step, epsilon = FLIPBOOK_DURATION / FLIPBOOK_FRAMES, 0.00001
+            for i = 1, FLIPBOOK_FRAMES do
+                local first, last = FLIPBOOK_DURATION - i * step, FLIPBOOK_DURATION - (i - 1) * step
+                local curve = C_CurveUtil.CreateCurve()
+                curve:SetType(Enum.LuaCurveType.Linear)
+                curve:AddPoint(0, 0)
+                if first > epsilon then curve:AddPoint(first, 0) end
+                curve:AddPoint(first + epsilon, 1)
+                curve:AddPoint(last, 1)
+                curve:AddPoint(last + epsilon, 0)
+                curve:AddPoint(86400, 0)
+                flipbookCurves[i] = curve
+            end
+        end
+        flipbook = CreateFrame("Frame", nil, item)
+        flipbook:EnableMouse(false)
+        flipbook.item, flipbook.readyElapsed, flipbook.pieces = item, 0, {}
+        local width = (atlas.rightTexCoord - atlas.leftTexCoord) / FLIPBOOK_COLUMNS
+        local height = (atlas.bottomTexCoord - atlas.topTexCoord) / FLIPBOOK_ROWS
+        for i = 1, FLIPBOOK_FRAMES do
+            local column, row = (i - 1) % FLIPBOOK_COLUMNS, math.floor((i - 1) / FLIPBOOK_COLUMNS)
+            local left, top = atlas.leftTexCoord + column * width, atlas.topTexCoord + row * height
+            local texture = flipbook:CreateTexture(nil, "ARTWORK")
+            texture:SetTexture(file)
+            texture:SetTexCoord(left, left + width, top, top + height)
+            texture:SetAllPoints(flipbook)
+            texture:SetAlpha(0)
+            flipbook.pieces[i] = { texture, curve = flipbookCurves[i] }
+        end
+        flipbook:Hide()
+        flipbooks[item] = flipbook
+    end
+    -- Same geometry and layer as the skinned native flash.
+    Skin:FitNativeEffect(item, flipbook, key)
+    return flipbook
+end
+
 local function readyLevel(item)
     local level = item:GetFrameLevel()
+    if item.Cooldown then level = math.max(level, item.Cooldown:GetFrameLevel()) end
     if item.CooldownFlash then level = math.max(level, item.CooldownFlash:GetFrameLevel()) end
     -- The pandemic edge sits one level above Blizzard's pandemic frame.
     if item.PandemicIcon then level = math.max(level, item.PandemicIcon:GetFrameLevel() + 1) end
@@ -467,58 +521,71 @@ local function updateReady(square, elapsed)
     for _, piece in ipairs(square.pieces) do
         local alpha = duration:EvaluateRemainingDuration(piece.curve)
         piece[1]:SetAlpha(alpha)
-        piece[2]:SetAlpha(alpha)
+        if piece[2] then piece[2]:SetAlpha(alpha) end
     end
 end
 
 function stopReady(item)
-    local square = edges[item]
+    local frame = readyFrames[item]
     if readyDurations[item] then traceEvent(item, "ready", "stop") end
     readyDurations[item] = nil
-    if square and square.readyEdge then
-        square:SetScript("OnUpdate", nil)
-        square:Hide()
+    if frame then
+        frame:SetScript("OnUpdate", nil)
+        frame:Hide()
     end
 end
 
 --- Runs whenever Blizzard refreshes the item's cooldown (casts, GCD start/end, procs, aura changes).
 local function refreshReady(item)
-    local s = settings(item, "flash")
-    local square = edges[item]
-    if not s or not s.custom or not square or not square.readyAvailable then return end
+    local frame = readyFrames[item]
+    if not frame or not settings(item, "flash") then return end
+    if item.isCustomTracker and not item:IsShown() then
+        stopReady(item)
+        return
+    end
     local duration, busy = readyCooldown(item)
     if duration then
         if not readyDurations[item] then traceEvent(item, "ready", "track") end
         readyDurations[item] = duration:Copy()
         raiseReady(item)
-        square.readyElapsed = UPDATE_INTERVAL
-        updateReady(square, 0)
+        frame.readyElapsed = UPDATE_INTERVAL
+        updateReady(frame, 0)
         if readyDurations[item] then
-            square:SetScript("OnUpdate", updateReady)
-            square:Show()
+            frame:SetScript("OnUpdate", updateReady)
+            frame:Show()
         end
     elseif readyDurations[item] then
         if busy then traceEvent(item, "ready", "keep") else stopReady(item) end
     end
 end
 
+--- Custom trackers have no Blizzard flash, so they get a replica unless the custom square replaces it.
 local function styleFlash(item)
     local flash = item.CooldownFlash
-    if not flash or not flash.Flipbook then return end
+    local replica = item.isCustomTracker
+    if not replica and (not flash or not flash.Flipbook) then return end
     local s, key = settings(item, "flash")
     local custom = s and s.custom and styleReady(item, s, key)
-    if edges[item] then edges[item].readyAvailable = custom end
+    local ready
     if custom then
-        local square = edges[item]
-        if not readyDurations[item] then square:Hide() end
-        refreshReady(item)
-    elseif edges[item] then
+        ready = edges[item]
+    elseif replica and s then
+        ready = styleFlipbook(item, key)
+    end
+    if readyFrames[item] ~= ready then
         stopReady(item)
-        local square = edges[item]
+        readyFrames[item] = ready
+    end
+    local square = edges[item]
+    if not custom and square then
         square.readyCurves = nil
         for _, piece in ipairs(square.pieces) do piece.curve = nil end
     end
-    flash.Flipbook:SetShown(not custom)
+    if ready then
+        if not readyDurations[item] then ready:Hide() end
+        refreshReady(item)
+    end
+    if flash and flash.Flipbook then flash.Flipbook:SetShown(not custom) end
 end
 
 -- Debuff border ------------------------------------------------------------------------------
@@ -568,6 +635,8 @@ local function hook(item)
         end
         local cooldown = item.GetCooldownFrame and item:GetCooldownFrame() or item.Cooldown
         if cooldown then cooldown:HookScript("OnCooldownDone", function() refreshReady(item) end) end
+    elseif item.isCustomTracker then
+        item.Cooldown:HookScript("OnCooldownDone", function() refreshReady(item) end)
     end
     local border = item.DebuffBorder
     if border and border.Texture then
@@ -629,6 +698,13 @@ function NativeGlows:OnEnable()
         if not incremental then NativeGlows:Refresh() end
     end)
     hooksecurefunc(Addon:GetModule("Borders"), "SetShared", function() NativeGlows:Refresh() end)
+    -- Custom trackers update on cooldown events, like Blizzard items do in RefreshSpellCooldownInfo.
+    local Trackers = Addon:GetModule("CustomTrackers", true)
+    if Trackers then
+        hooksecurefunc(Trackers, "UpdateFrame", function(_, frame)
+            if owners[frame] then refreshReady(frame) end
+        end)
+    end
     for _, key in ipairs(KEYS) do self:OnViewerMessage(nil, key) end
 end
 
