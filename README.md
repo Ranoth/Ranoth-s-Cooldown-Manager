@@ -75,6 +75,10 @@ remains owned by Blizzard's Edit Mode. The existing Layout settings namespace,
 public API and compact companion menu are unchanged; the menu stays loaded on
 demand and does not need to mirror the runtime components.
 
+The default stack places buff icons first, followed by the cast bar, class
+resource bar, primary power bar, Essential and Utility viewers. Explicitly
+saved stack positions remain unchanged.
+
 Icon layout is grouped under `src\Modules\IconLayout`:
 
 - `Common.lua`: the IconLayout module, defaults and combined-content dimensions.

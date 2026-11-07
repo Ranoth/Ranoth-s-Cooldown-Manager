@@ -28,12 +28,12 @@ local defaults = {
         strata = "LOW",
         width = { mode = "anchor", value = 250 }, -- "anchor" follows the anchor viewer's width, "fixed" uses value
         stack = {
-            CastBar = { enabled = true, position = 1, height = 20, collapse = false },
-            ClassPower = { enabled = true, position = 2, height = 12, collapse = true },
-            Mana = { enabled = true, position = 3, height = 12, collapse = true },
-            Essential = { enabled = true, position = 4 },
-            Utility = { enabled = true, position = 5 },
-            BuffIcon = { enabled = true, position = 6 },
+            BuffIcon = { enabled = true, position = 1 },
+            CastBar = { enabled = true, position = 2, height = 20, collapse = false },
+            ClassPower = { enabled = true, position = 3, height = 12, collapse = true },
+            Mana = { enabled = true, position = 4, height = 12, collapse = true },
+            Essential = { enabled = true, position = 5 },
+            Utility = { enabled = true, position = 6 },
         },
     },
 }

@@ -1,25 +1,25 @@
-# name: Lint
+name: Lint
 
-# on:
-#   push:
-#     branches:
-#       - master
-#   pull_request:
-#     branches:
-#       - master
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
 
-# permissions:
-#   checks: write
-#   contents: write
+permissions:
+  checks: write
+  contents: write
 
-# jobs:
-#   run-linters:
-#     runs-on: ubuntu-latest
+jobs:
+  run-linters:
+    runs-on: ubuntu-latest
 
-#     steps:
-#       - uses: actions/checkout@v4
-#         with:
-#           token: ${{ secrets.PAT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
 
-#       - name: Run Luacheck
-#         uses: nebularg/actions-luacheck@v1.1.0
+      - name: Run Luacheck
+        uses: nebularg/actions-luacheck@v1.1.0
