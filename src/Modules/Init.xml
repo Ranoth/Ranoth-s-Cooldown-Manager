@@ -1,12 +1,12 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ..\FrameXML\UI.xsd">
-	<Script file="Borders.lua"/>
-	<Script file="Layout.lua"/>
+	<Include file="Borders\Init.xml"/>
+	<Include file="Layout\Init.xml"/>
 	<Script file="BuffBars.lua"/>
-	<Script file="IconLayout.lua"/>
-	<Script file="Skin.lua"/>
-	<Script file="Glow.lua"/>
-	<Script file="NativeGlows.lua"/>
-	<Script file="CustomTrackers.lua"/>
-	<Script file="Bars.lua"/>
+	<Include file="IconLayout\Init.xml"/>
+	<Include file="Skin\Init.xml"/>
+	<Include file="Glow\Init.xml"/>
+	<Include file="NativeGlows\Init.xml"/>
+	<Include file="CustomTrackers\Init.xml"/>
+	<Include file="Bars\Init.xml"/>
 	<Script file="ResourceSkin.lua"/>
 </Ui>

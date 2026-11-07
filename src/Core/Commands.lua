@@ -56,6 +56,12 @@ local commandList = {
         help = "Captures the last 100 glow lifecycle events for troubleshooting",
         argsHelp = "[start|stop]"
     },
+    ["glowlayers"] = {
+        func = function()
+            RanothsCooldownManager:GetModule("Glow"):DescribeLayers()
+        end,
+        help = "Reports visible proc glow, ancestor clipping and neighboring border layers"
+    },
     ["trackerskin"] = {
         func = function()
             RanothsCooldownManager:GetModule("Skin"):DescribeTrackers()

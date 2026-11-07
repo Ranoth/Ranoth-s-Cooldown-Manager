@@ -1,0 +1,10 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <Script file="Common.lua"/>
+    <Script file="Trace.lua"/>
+    <Script file="ReadyFlash.lua"/>
+    <Script file="Pandemic.lua"/>
+    <Script file="VisualAlerts.lua"/>
+    <Script file="DebuffBorder.lua"/>
+    <Script file="Previews.lua"/>
+    <Script file="NativeGlows.lua"/>
+</Ui>

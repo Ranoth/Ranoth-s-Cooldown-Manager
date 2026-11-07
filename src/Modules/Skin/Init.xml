@@ -1,0 +1,10 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <Script file="Common.lua"/>
+    <Script file="GlowGeometry.lua"/>
+    <Script file="NativeEffects.lua"/>
+    <Script file="Text.lua"/>
+    <Script file="IconStyle.lua"/>
+    <Script file="ActiveAlpha.lua"/>
+    <Script file="ItemCounts.lua"/>
+    <Script file="Skin.lua"/>
+</Ui>

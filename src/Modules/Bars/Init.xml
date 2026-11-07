@@ -1,0 +1,7 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <Script file="Common.lua"/>
+    <Script file="CastBar.lua"/>
+    <Script file="PrimaryPower.lua"/>
+    <Script file="ClassPower.lua"/>
+    <Script file="Bars.lua"/>
+</Ui>

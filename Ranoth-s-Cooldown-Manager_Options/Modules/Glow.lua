@@ -30,9 +30,8 @@ function Glow:GetOptions()
                         get = function() return s().enabled end, set = set("enabled"),
                     },
                     preview = {
-                        type = "toggle", order = 1.5, name = "Preview glow",
-                        desc = "Show the glow on this viewer's icons without requiring a proc. Not saved between reloads.",
-                        disabled = function() return not s().enabled end,
+                        type = "toggle", order = 1.5, name = "Test proc glow",
+                        desc = "Show the selected custom or Blizzard glow on this viewer's visible icons without requiring a proc. Not saved between reloads.",
                         get = function() return self:GetPreview(key) end,
                         set = function(_, value)
                             self:SetPreview(key, value)

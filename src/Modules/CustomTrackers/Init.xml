@@ -1,0 +1,10 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <Script file="Common.lua"/>
+    <Script file="Availability.lua"/>
+    <Script file="Geometry.lua"/>
+    <Script file="Frames.lua"/>
+    <Script file="SpellCooldown.lua"/>
+    <Script file="ItemCooldown.lua"/>
+    <Script file="Entries.lua"/>
+    <Script file="CustomTrackers.lua"/>
+</Ui>

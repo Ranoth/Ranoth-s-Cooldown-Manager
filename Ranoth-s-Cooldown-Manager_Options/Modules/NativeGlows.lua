@@ -24,6 +24,17 @@ function NativeGlows:GetViewerOptions(key)
         return { type = "range", order = order, name = name, min = min, max = max, step = step,
             disabled = disabled or off(effect), get = getter(effect, field), set = setter(effect, field) }
     end
+    local function preview(effect, order, name)
+        local sample = effect == "debuff" and " Uses a sample Magic debuff."
+            or (effect == "ants" or effect == "alertFlash") and " Uses a sample gold alert for Blizzard's art and 'Use alert color'."
+            or ""
+        return {
+            type = "toggle", order = order, name = name,
+            desc = "Loop the selected custom or Blizzard effect on this viewer's visible icons. Tests do not change cooldowns or auras and are not saved between reloads." .. sample,
+            get = function() return self:GetPreview(key, effect) end,
+            set = function(_, value) self:SetPreview(key, effect, value) end,
+        }
+    end
 
     local args = {
         pandemic = {
@@ -31,6 +42,7 @@ function NativeGlows:GetViewerOptions(key)
             args = {
                 custom = toggle("pandemic", 1, "Custom pandemic glow",
                     "Replace Blizzard's rounded pandemic ring with a square edge inside the icon border."),
+                preview = preview("pandemic", 1.5, "Test pandemic glow"),
                 color = color("pandemic", 2, "Color"),
                 thickness = range("pandemic", "thickness", 3, "Thickness", 1, 5, 1),
                 pulse = { type = "toggle", order = 4, name = "Pulse", disabled = off("pandemic"),
@@ -46,6 +58,8 @@ function NativeGlows:GetViewerOptions(key)
                     name = "Marching ants and flash alerts set in Blizzard's Cooldown Manager alert settings." },
                 custom = toggle("alerts", 1, "Custom visual alerts",
                     "Marching ants become moving pixel lines; flashes become a pulsing square edge."),
+                previewAnts = preview("ants", 1.5, "Test marching ants"),
+                previewFlash = preview("alertFlash", 1.6, "Test flash alert"),
                 useAlertColor = { type = "toggle", order = 2, name = "Use alert color",
                     desc = "Use the color chosen for the alert in Blizzard's settings.", disabled = off("alerts"),
                     get = getter("alerts", "useAlertColor"), set = setter("alerts", "useAlertColor") },
@@ -61,6 +75,7 @@ function NativeGlows:GetViewerOptions(key)
             args = {
                 custom = toggle("debuff", 1, "Custom debuff border",
                     "Replace Blizzard's debuff border with a square edge in the debuff type's color."),
+                preview = preview("debuff", 1.5, "Test debuff border"),
                 thickness = range("debuff", "thickness", 2, "Thickness", 1, 5, 1),
             },
         },
@@ -71,6 +86,7 @@ function NativeGlows:GetViewerOptions(key)
             args = {
                 custom = toggle("flash", 1, "Custom ready flash",
                     "Two lines start at opposite corners and each travel clockwise halfway around the icon before the cooldown ends."),
+                preview = preview("flash", 1.5, "Test ready flash"),
                 color = color("flash", 2, "Color"),
                 thickness = range("flash", "thickness", 3, "Thickness", 1, 5, 1),
                 duration = range("flash", "duration", 4, "Animation duration", 0.2, 2, 0.05),
