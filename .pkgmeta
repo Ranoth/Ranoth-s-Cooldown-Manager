@@ -25,6 +25,11 @@ manual-changelog:
   markup-type: "markdown"
 
 ignore:
+  - .github
+  - .vscode
+  - .gitignore
+  - .gitattributes
+  - .luacheckrc
   - config.ld
   - docs
   - version.txt

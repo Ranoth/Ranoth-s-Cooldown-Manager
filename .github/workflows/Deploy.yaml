@@ -3,40 +3,53 @@ name: Package and Release
 on:
   release:
     types:
-      - released
+      - published
+
+permissions:
+  contents: write
 
 jobs:
-  post_pr:
+  package:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PAT }}
-          ref: refs/heads/master
+          ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Bump version in toc
-        run: |
-          VERSION="v$(cat version.txt)"
-          mapfile -d '' toc_files < <(find . -maxdepth 1 -name "*.toc" -print0)
-          for toc_file in ${toc_files[@]}; do
-            sed -i "s/## Version: .*/## Version: $VERSION/" "$toc_file"
-          done
-
-      - name: Get latest release
-        id: get_release
+      - name: Set packaged addon versions
         env:
-          GH_TOKEN: ${{ secrets.PAT }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          LATEST_RELEASE_ID=$(gh api repos/:owner/:repo/releases/latest --jq .id)
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
 
-          RELEASE_JSON=$(curl --header "Authorization: token ${{ secrets.PAT }}" "https://api.github.com/repos/${{ github.repository }}/releases/$LATEST_RELEASE_ID")
-          RELEASE_BODY=$(echo "$RELEASE_JSON" | jq -r .body)
+          version = os.environ["RELEASE_TAG"]
+          files = [
+              Path("Ranoth-s-Cooldown-Manager.toc"),
+              Path("Ranoth-s-Cooldown-Manager_Options")
+              / "Ranoth-s-Cooldown-Manager_Options.toc",
+          ]
+          for path in files:
+              lines = path.read_text().splitlines()
+              if sum(line.startswith("## Version:") for line in lines) != 1:
+                  raise SystemExit(f"Expected one version entry in {path}")
+              path.write_text("\n".join(
+                  f"## Version: {version}"
+                  if line.startswith("## Version:") else line
+                  for line in lines
+              ) + "\n")
+          PY
 
-          echo "$RELEASE_BODY" > RELEASE.md
+      - name: Prepare generated release notes
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: printf '%s\n' "$RELEASE_BODY" > RELEASE.md
 
-      - name: Build addon
+      - name: Package and upload
         uses: BigWigsMods/packager@master
         env:
           GITHUB_OAUTH: ${{ secrets.PAT }}
