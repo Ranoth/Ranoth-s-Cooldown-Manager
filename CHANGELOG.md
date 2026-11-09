@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/Ranoth/Ranoth-s-Cooldown-Manager/compare/v1.0.0...v1.0.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* Add project ID ([fb07e81](https://github.com/Ranoth/Ranoth-s-Cooldown-Manager/commit/fb07e813e156a5b409d910b0261729915c42e27c))
+
 ## 1.0.0 (2026-11-09)
 
 
